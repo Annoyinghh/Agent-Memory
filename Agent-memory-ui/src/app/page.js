@@ -259,6 +259,214 @@ export default function SPAHomepage() {
   };
 
   // ────────────────────────────────────────────────────────
+  // 3. Layered Memory Architecture (P1) State & Logic
+  // ────────────────────────────────────────────────────────
+  const [shortTermHistory, setShortTermHistory] = useState([]);
+  const [shortTermLoading, setShortTermLoading] = useState(false);
+  const [newDialogRole, setNewDialogRole] = useState('user');
+  const [newDialogContent, setNewDialogContent] = useState('');
+  const [addDialogLoading, setAddDialogLoading] = useState(false);
+
+  const [workingState, setWorkingState] = useState({});
+  const [workingLoading, setWorkingLoading] = useState(false);
+  const [newWorkingKey, setNewWorkingKey] = useState('');
+  const [newWorkingValue, setNewWorkingValue] = useState('');
+  const [writeWorkingLoading, setWriteWorkingLoading] = useState(false);
+  const [editingWorkingKey, setEditingWorkingKey] = useState(null);
+  const [editingWorkingValue, setEditingWorkingValue] = useState('');
+
+  const [consolidationLoading, setConsolidationLoading] = useState(false);
+  const [consolidationMessage, setConsolidationMessage] = useState(null);
+  const [consolidationId, setConsolidationId] = useState(null);
+
+  const fetchMemoryLayersData = async () => {
+    if (!activeNamespace || activeNamespace === 'all') return;
+    setShortTermLoading(true);
+    setWorkingLoading(true);
+    try {
+      const stRes = await api.getShortTermMemory(activeNamespace);
+      setShortTermHistory(stRes.history || []);
+    } catch (err) {
+      console.error('Failed to fetch short term memory:', err);
+    } finally {
+      setShortTermLoading(false);
+    }
+
+    try {
+      const wmRes = await api.listWorkingMemory(activeNamespace);
+      setWorkingState(wmRes.state || {});
+    } catch (err) {
+      console.error('Failed to fetch working memory:', err);
+    } finally {
+      setWorkingLoading(false);
+    }
+  };
+
+  // Fetch Short-term and Working memory when tab changes to 'memory' or namespace changes
+  useEffect(() => {
+    if (activeTab === 'memory') {
+      if (activeNamespace === 'all' && namespaces.length > 0) {
+        const firstRealNs = namespaces.find(n => n !== 'all');
+        if (firstRealNs) {
+          setActiveNamespace(firstRealNs);
+        }
+      } else {
+        fetchMemoryLayersData();
+      }
+    }
+  }, [activeNamespace, activeTab, namespaces]);
+
+  const handleAddDialog = async (e) => {
+    if (e) e.preventDefault();
+    if (!newDialogContent.trim() || activeNamespace === 'all') return;
+    setAddDialogLoading(true);
+    try {
+      await api.addShortTermMemory(activeNamespace, newDialogRole, newDialogContent);
+      setNewDialogContent('');
+      await fetchMemoryLayersData();
+      setLastEvent({
+        type: 'insert',
+        message: `短期对话记忆已注入！当前角色：${newDialogRole === 'user' ? '用户' : 'Agent'}`
+      });
+    } catch (err) {
+      console.error(err);
+      alert('注入短期对话记忆失败');
+    } finally {
+      setAddDialogLoading(false);
+    }
+  };
+
+  const handleDeleteShortTerm = async (index) => {
+    if (activeNamespace === 'all') return;
+    try {
+      await api.deleteShortTermMemory(activeNamespace, index);
+      await fetchMemoryLayersData();
+      setLastEvent({
+        type: 'delete',
+        message: `已删除第 ${index + 1} 条短期对话记忆。`
+      });
+    } catch (err) {
+      console.error(err);
+      alert('删除短期对话记忆失败');
+    }
+  };
+
+  const handleClearShortTerm = async () => {
+    console.log('[ClearShortTerm] Invoked. activeNamespace:', activeNamespace);
+    if (activeNamespace === 'all') return;
+    const confirmed = confirm('确定要清空当前命名空间下的所有短期对话记忆吗？');
+    console.log('[ClearShortTerm] User confirmed:', confirmed);
+    if (!confirmed) return;
+    try {
+      console.log('[ClearShortTerm] Calling api.deleteShortTermMemory...');
+      const res = await api.deleteShortTermMemory(activeNamespace);
+      console.log('[ClearShortTerm] API response:', res);
+      await fetchMemoryLayersData();
+      setLastEvent({
+        type: 'delete',
+        message: `短期对话记忆已全部清空。`
+      });
+    } catch (err) {
+      console.error('[ClearShortTerm] Error clearing short term memory:', err);
+      alert('清空短期对话记忆失败: ' + err.message);
+    }
+  };
+
+  const handleWriteWorking = async (e) => {
+    if (e) e.preventDefault();
+    if (!newWorkingKey.trim() || activeNamespace === 'all') return;
+    setWriteWorkingLoading(true);
+    try {
+      await api.writeWorkingMemory(activeNamespace, newWorkingKey.trim(), newWorkingValue);
+      setNewWorkingKey('');
+      setNewWorkingValue('');
+      await fetchMemoryLayersData();
+      setLastEvent({
+        type: 'insert',
+        message: `工作记忆 [ ${newWorkingKey} ] 已写入/更新。`
+      });
+    } catch (err) {
+      console.error(err);
+      alert('写入工作记忆失败');
+    } finally {
+      setWriteWorkingLoading(false);
+    }
+  };
+
+  const handleDeleteWorking = async (key) => {
+    if (activeNamespace === 'all') return;
+    try {
+      await api.deleteWorkingMemory(activeNamespace, key);
+      await fetchMemoryLayersData();
+      setLastEvent({
+        type: 'delete',
+        message: `工作记忆 [ ${key} ] 已删除。`
+      });
+    } catch (err) {
+      console.error(err);
+      alert('删除工作记忆失败');
+    }
+  };
+
+  const handleClearWorking = async () => {
+    if (activeNamespace === 'all') return;
+    if (!confirm('确定要清空当前命名空间下的所有工作记忆状态吗？')) return;
+    try {
+      await api.clearWorkingMemory(activeNamespace);
+      await fetchMemoryLayersData();
+      setLastEvent({
+        type: 'delete',
+        message: `工作记忆已清空。`
+      });
+    } catch (err) {
+      console.error(err);
+      alert('清空工作记忆失败');
+    }
+  };
+
+  const handleSaveWorkingEdit = async (key) => {
+    if (activeNamespace === 'all') return;
+    try {
+      await api.writeWorkingMemory(activeNamespace, key, editingWorkingValue);
+      setEditingWorkingKey(null);
+      await fetchMemoryLayersData();
+      setLastEvent({
+        type: 'insert',
+        message: `工作记忆 [ ${key} ] 状态更新完成。`
+      });
+    } catch (err) {
+      console.error(err);
+      alert('更新工作记忆失败');
+    }
+  };
+
+  const handleConsolidate = async () => {
+    if (activeNamespace === 'all') return;
+    setConsolidationLoading(true);
+    setConsolidationMessage(null);
+    setConsolidationId(null);
+    try {
+      const res = await api.consolidateMemory(activeNamespace);
+      setConsolidationId(res.id);
+      setConsolidationMessage(res.message);
+      
+      await refreshData({
+        type: 'snapshot',
+        namespace: activeNamespace,
+        message: res.id 
+          ? `记忆整合完毕！短期记忆已被压缩提炼为长期记忆，并录入向量数据库 [ID: ${res.id.substring(0, 8)}...]。`
+          : `短期记忆内没有足够的对话需要进行整合。`
+      });
+      await fetchMemoryLayersData();
+    } catch (err) {
+      console.error(err);
+      setConsolidationMessage('整合失败，请确保后台已配置 LLM API 密钥并且当前有足够的短期记忆。');
+    } finally {
+      setConsolidationLoading(false);
+    }
+  };
+
+  // ────────────────────────────────────────────────────────
   // Helper Formatters
   // ────────────────────────────────────────────────────────
   const namespacesList = Object.entries(stats.namespaces || {}).map(([name, count]) => {
@@ -1049,6 +1257,274 @@ export default function SPAHomepage() {
           </div>
         )}
 
+        {/* TAB 4: MEMORY_LAYERS (分层记忆) */}
+        {activeTab === 'memory' && (
+          <div className="tab-view-content fade-in-view memory-tab-layout">
+            {activeNamespace === 'all' ? (
+              <div style={{ display: 'flex', justifyContent: 'center', padding: '40px', width: '100%' }}>
+                <GlassCard title="系统提示 // SYSTEM NOTICE" glowColor="purple" className="op-panel-card" style={{ maxWidth: '600px', width: '100%' }}>
+                  <div style={{ padding: '20px', textAlign: 'center', fontFamily: 'var(--font-mono)' }}>
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ color: 'hsl(var(--color-purple))', margin: '0 auto 16px', display: 'block' }}>
+                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01" />
+                    </svg>
+                    <div style={{ fontSize: '14px', fontWeight: 'bold', color: 'white', marginBottom: '8px' }}>请选择特定的命名空间</div>
+                    <div style={{ fontSize: '12px', color: 'hsl(var(--text-muted))', lineHeight: '1.6' }}>
+                      分层记忆体系（短期滑动窗口、工作记忆与睡眠巩固）需要指定特定的命名空间进行分区隔离。
+                      请在左侧或导航面板中选择具体的命名空间。
+                    </div>
+                  </div>
+                </GlassCard>
+              </div>
+            ) : (
+              <div className="memory-grid-container">
+                {/* Left Column: Short-Term Memory Dialog Simulation & Telemetry */}
+                <div className="memory-col-left">
+                  <GlassCard title="短期记忆滑动窗口 (Short-Term Dialog Window)" glowColor="cyan" className="op-panel-card">
+                    <div className="short-term-panel">
+                      {/* Simulation Dialog Injector Form */}
+                      <form onSubmit={handleAddDialog} className="sci-form" style={{ borderBottom: '1px dashed rgba(0, 242, 254, 0.15)', paddingBottom: '16px', marginBottom: '16px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '120px minmax(0, 1fr) auto', gap: '10px', alignItems: 'flex-end' }}>
+                          <div className="form-group-sci" style={{ marginBottom: 0 }}>
+                            <label style={{ fontSize: '10px' }}>模拟对话角色</label>
+                            <select
+                              value={newDialogRole}
+                              onChange={(e) => setNewDialogRole(e.target.value)}
+                              className="sci-control-select"
+                              style={{ padding: '6px 10px', fontSize: '11.5px', height: '34px' }}
+                            >
+                              <option value="user">User (用户)</option>
+                              <option value="assistant">Assistant (智能体)</option>
+                            </select>
+                          </div>
+                          <div className="form-group-sci" style={{ marginBottom: 0 }}>
+                            <label style={{ fontSize: '10px' }}>输入模拟对话内容</label>
+                            <input
+                              type="text"
+                              value={newDialogContent}
+                              onChange={(e) => setNewDialogContent(e.target.value)}
+                              placeholder="键入一轮模拟的对话内容进行注入测试..."
+                              className="sci-control-input"
+                              style={{ padding: '6px 10px', fontSize: '11.5px', height: '34px' }}
+                              required
+                            />
+                          </div>
+                          <button type="submit" className="sci-submit-btn bg-cyan" disabled={addDialogLoading} style={{ padding: '0 16px', height: '34px', fontSize: '11px', whiteSpace: 'nowrap', flexShrink: 0, minWidth: '80px' }}>
+                            {addDialogLoading ? '注入中...' : '注入对话'}
+                          </button>
+                        </div>
+                      </form>
+
+                      {/* Rolling window log list */}
+                      <div className="chat-log-list font-mono">
+                        {shortTermLoading ? (
+                          <div className="search-status-banner" style={{ padding: '20px' }}>[ TELEMETRY_LOADING // 短期记忆读取中... ]</div>
+                        ) : shortTermHistory.length === 0 ? (
+                          <div className="search-empty-banner" style={{ padding: '30px', borderWidth: 0 }}>
+                            <div style={{ fontSize: '11px', color: 'hsl(var(--text-muted))' }}>
+                              [ NO_ST_HISTORY // 当前命名空间下无活跃的对话历史。 ]
+                            </div>
+                            <div style={{ fontSize: '10px', color: 'hsl(var(--text-dark))', marginTop: '6px' }}>
+                              请使用上方表单模拟对话，或通过外部 MCP 调用。
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="chat-bubbles-container">
+                            <div style={{ fontSize: '10px', color: 'hsl(var(--text-muted))', paddingBottom: '10px', borderBottom: '1px solid rgba(255,255,255,0.03)', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span>SLIDING_WINDOW_HISTORY:</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <span className="text-cyan">{shortTermHistory.length} TURNS</span>
+                                <button type="button" onClick={handleClearShortTerm} className="clear-all-wm-btn" style={{ padding: '1px 6px', fontSize: '9px', justifySelf: 'auto' }}>清空全部</button>
+                              </div>
+                            </div>
+                            {shortTermHistory.map((msg, index) => {
+                              const isUser = msg.role === 'user';
+                              return (
+                                <div key={index} className={`chat-bubble-row ${isUser ? 'user-align' : 'agent-align'}`}>
+                                  <div className={`chat-bubble ${isUser ? 'user-bubble' : 'agent-bubble'}`} style={{ paddingRight: '28px' }}>
+                                    <div className="bubble-role">
+                                      {isUser ? '● USER' : '♦ ASSISTANT'}
+                                    </div>
+                                    <div className="bubble-content">{msg.content}</div>
+                                    <button 
+                                      type="button" 
+                                      onClick={() => handleDeleteShortTerm(index)} 
+                                      className="bubble-delete-btn" 
+                                      title="删除此条对话"
+                                    >
+                                      ×
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </GlassCard>
+                </div>
+
+                {/* Right Column: Working Memory Scratchpad & Memory Consolidation */}
+                <div className="memory-col-right">
+                  {/* Working Memory Scratchpad */}
+                  <GlassCard title="工作记忆状态面板 (Working Memory Scratchpad)" glowColor="purple" className="op-panel-card" style={{ marginBottom: '0px' }}>
+                    <div className="working-mem-panel">
+                      {/* Quick Set Form */}
+                      <form onSubmit={handleWriteWorking} className="sci-form" style={{ marginBottom: '16px', borderBottom: '1px dashed rgba(138, 43, 226, 0.15)', paddingBottom: '16px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto', gap: '10px', alignItems: 'flex-end' }}>
+                          <div className="form-group-sci" style={{ marginBottom: 0 }}>
+                            <label style={{ fontSize: '10px' }}>状态键 (Key)</label>
+                            <input
+                              type="text"
+                              value={newWorkingKey}
+                              onChange={(e) => setNewWorkingKey(e.target.value)}
+                              placeholder="例如: current_goal"
+                              className="sci-control-input"
+                              style={{ padding: '6px 10px', fontSize: '11.5px', height: '34px' }}
+                              required
+                            />
+                          </div>
+                          <div className="form-group-sci" style={{ marginBottom: 0 }}>
+                            <label style={{ fontSize: '10px' }}>状态值 (Value)</label>
+                            <input
+                              type="text"
+                              value={newWorkingValue}
+                              onChange={(e) => setNewWorkingValue(e.target.value)}
+                              placeholder="当前上下文状态值..."
+                              className="sci-control-input"
+                              style={{ padding: '6px 10px', fontSize: '11.5px', height: '34px' }}
+                              required
+                            />
+                          </div>
+                          <button type="submit" className="sci-submit-btn bg-purple" disabled={writeWorkingLoading} style={{ padding: '0 16px', height: '34px', fontSize: '11px', whiteSpace: 'nowrap', flexShrink: 0, minWidth: '80px' }}>
+                            {writeWorkingLoading ? '写入中...' : '写入状态'}
+                          </button>
+                        </div>
+                      </form>
+
+                      {/* Working State List */}
+                      <div className="working-state-list font-mono" style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                        {workingLoading ? (
+                          <div className="search-status-banner" style={{ padding: '15px' }}>[ TELEMETRY_LOADING // 工作状态获取中... ]</div>
+                        ) : Object.keys(workingState).length === 0 ? (
+                          <div className="search-empty-banner" style={{ padding: '20px', borderWidth: 0 }}>
+                            <div style={{ fontSize: '11px', color: 'hsl(var(--text-muted))' }}>
+                              [ EMPTY_SCRATCHPAD // 当前无活跃的工作状态。 ]
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="working-table">
+                            <div className="working-table-header">
+                              <span>KEY (状态键)</span>
+                              <span>VALUE (状态内容)</span>
+                              <button type="button" onClick={handleClearWorking} className="clear-all-wm-btn">清空所有</button>
+                            </div>
+                            {Object.entries(workingState).map(([key, val]) => {
+                              const isEditing = editingWorkingKey === key;
+                              return (
+                                <div key={key} className="working-table-row">
+                                  <span className="wm-row-key text-purple" title={key}>{key}</span>
+                                  {isEditing ? (
+                                    <div style={{ display: 'flex', gap: '8px', flex: 1, gridColumn: 'span 2', padding: '0' }}>
+                                      <input
+                                        type="text"
+                                        value={editingWorkingValue}
+                                        onChange={(e) => setEditingWorkingValue(e.target.value)}
+                                        className="sci-control-input"
+                                        style={{ padding: '4px 8px', fontSize: '11px', flex: 1 }}
+                                      />
+                                      <button type="button" className="wm-save-btn" onClick={() => handleSaveWorkingEdit(key)}>保存</button>
+                                      <button type="button" className="wm-cancel-btn" onClick={() => setEditingWorkingKey(null)}>取消</button>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <span className="wm-row-val" title={val}>{val}</span>
+                                      <div className="wm-row-actions">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setEditingWorkingKey(key);
+                                            setEditingWorkingValue(val);
+                                          }}
+                                          className="wm-edit-btn-inline"
+                                        >
+                                          修改
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDeleteWorking(key)}
+                                          className="wm-del-btn-inline"
+                                        >
+                                          删除
+                                        </button>
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </GlassCard>
+
+                  {/* Memory Consolidation Trigger */}
+                  <GlassCard title="记忆整合与睡眠巩固 (Memory Consolidation)" glowColor="purple" className="op-panel-card" style={{ marginTop: '20px' }}>
+                    <div className="consolidation-panel font-mono">
+                      <div className="consolidation-desc">
+                        <p style={{ fontSize: '11px', color: 'hsl(var(--text-muted))', lineHeight: '1.6', margin: '0 0 12px 0' }}>
+                          [ 睡眠巩固机制 ] 将最近的高频短期对话记忆（滑动窗口）提取核心内容，调用大模型自动进行高纯度摘要并持久化为长期记忆。此过程模拟人类的睡眠巩固，有助于整理对话碎片、避免遗忘。
+                        </p>
+                      </div>
+                      
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <button
+                          type="button"
+                          onClick={handleConsolidate}
+                          disabled={consolidationLoading || shortTermHistory.length === 0}
+                          className="sci-submit-btn bg-purple"
+                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', height: '36px' }}
+                        >
+                          {consolidationLoading ? (
+                            <>
+                              <svg width="16" height="16" viewBox="0 0 40 40" className="spinning-ring" style={{ color: 'white' }}>
+                                <circle cx="20" cy="20" r="16" fill="transparent" stroke="rgba(255,255,255,0.2)" strokeWidth="4" />
+                                <circle cx="20" cy="20" r="16" fill="transparent" stroke="white" strokeWidth="4" strokeDasharray="30,80" />
+                              </svg>
+                              <span>正在压缩巩固短期记忆中...</span>
+                            </>
+                          ) : (
+                            <>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+                              </svg>
+                              <span>触发整合提炼 (Consolidate Memory)</span>
+                            </>
+                          )}
+                        </button>
+
+                        {shortTermHistory.length === 0 && (
+                          <span style={{ fontSize: '10px', color: 'hsl(var(--color-purple))', textAlign: 'center' }}>
+                            ⚠️ 需当前命名空间下有短期对话对话历史方可进行整合。
+                          </span>
+                        )}
+
+                        {consolidationMessage && (
+                          <div className="sci-success-banner purple-color" style={{ marginTop: '6px', textAlign: 'left', padding: '10px' }}>
+                            <div>[ STATUS: {consolidationMessage} ]</div>
+                            {consolidationId && <div style={{ marginTop: '4px', fontSize: '10px', color: 'white' }}>长期记忆 ID: {consolidationId}</div>}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </GlassCard>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         </div>
       </div>
 
@@ -1095,22 +1571,25 @@ export default function SPAHomepage() {
           visibility: visible;
         }
 
-        /* Search / Ingest Tabs Layout Swap */
+        /* Search / Ingest / Memory Tabs Layout Swap */
         .cockpit-layout-grid.active-tab-search .system-left-panel,
-        .cockpit-layout-grid.active-tab-ingest .system-left-panel {
+        .cockpit-layout-grid.active-tab-ingest .system-left-panel,
+        .cockpit-layout-grid.active-tab-memory .system-left-panel {
           left: -340px;
           opacity: 0;
           visibility: hidden;
         }
 
         .cockpit-layout-grid.active-tab-search .avatar-center-panel,
-        .cockpit-layout-grid.active-tab-ingest .avatar-center-panel {
+        .cockpit-layout-grid.active-tab-ingest .avatar-center-panel,
+        .cockpit-layout-grid.active-tab-memory .avatar-center-panel {
           left: 0;
           width: 320px;
         }
 
         .cockpit-layout-grid.active-tab-search .operations-right-panel,
-        .cockpit-layout-grid.active-tab-ingest .operations-right-panel {
+        .cockpit-layout-grid.active-tab-ingest .operations-right-panel,
+        .cockpit-layout-grid.active-tab-memory .operations-right-panel {
           left: 344px;
           width: calc(100% - 320px - 24px);
         }
@@ -1489,6 +1968,7 @@ export default function SPAHomepage() {
           font-size: 12px;
           outline: none;
           transition: all 0.2s ease;
+          width: 100%;
         }
 
         .sci-control-textarea {
@@ -2108,6 +2588,258 @@ export default function SPAHomepage() {
           grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
           gap: 24px;
           align-items: start;
+        }
+
+        /* Memory Layers Tab styling */
+        .memory-tab-layout {
+          height: 100%;
+        }
+
+        .memory-grid-container {
+          display: grid;
+          grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+          gap: 24px;
+          align-items: start;
+        }
+
+        .memory-col-left, .memory-col-right {
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+        }
+
+        /* Short Term memory layout */
+        .short-term-panel {
+          display: flex;
+          flex-direction: column;
+        }
+
+        .chat-log-list {
+          display: flex;
+          flex-direction: column;
+          background: rgba(3, 5, 10, 0.45);
+          border: 1px solid rgba(0, 242, 254, 0.08);
+          border-radius: 8px;
+          padding: 16px;
+        }
+
+        .chat-bubbles-container {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          max-height: 480px;
+          overflow-y: auto;
+          padding-right: 6px;
+        }
+
+        .chat-bubble-row {
+          display: flex;
+          width: 100%;
+        }
+
+        .chat-bubble-row.user-align {
+          justify-content: flex-end;
+        }
+
+        .chat-bubble-row.agent-align {
+          justify-content: flex-start;
+        }
+
+        .chat-bubble {
+          max-width: 85%;
+          padding: 8px 12px;
+          border-radius: 8px;
+          font-size: 11.5px;
+          line-height: 1.5;
+          position: relative;
+        }
+
+        .bubble-delete-btn {
+          position: absolute;
+          top: 6px;
+          right: 8px;
+          background: transparent;
+          border: none;
+          color: rgba(255, 255, 255, 0.3);
+          font-size: 14px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          line-height: 1;
+          padding: 2px;
+          opacity: 0.6;
+        }
+
+        .bubble-delete-btn:hover {
+          color: #ff5f56;
+          opacity: 1;
+          text-shadow: 0 0 5px rgba(255, 95, 86, 0.5);
+        }
+
+        .user-bubble {
+          background: rgba(0, 242, 254, 0.04);
+          border: 1px solid rgba(0, 242, 254, 0.2);
+          color: #e2e8f0;
+          border-top-right-radius: 1px;
+          box-shadow: 0 0 10px rgba(0, 242, 254, 0.03);
+        }
+
+        .agent-bubble {
+          background: rgba(138, 43, 226, 0.04);
+          border: 1px solid rgba(138, 43, 226, 0.2);
+          color: #f8fafc;
+          border-top-left-radius: 1px;
+          box-shadow: 0 0 10px rgba(138, 43, 226, 0.03);
+        }
+
+        .bubble-role {
+          font-size: 8px;
+          font-weight: 800;
+          letter-spacing: 0.5px;
+          margin-bottom: 4px;
+          opacity: 0.8;
+        }
+
+        .user-bubble .bubble-role {
+          color: hsl(var(--color-cyan));
+        }
+
+        .agent-bubble .bubble-role {
+          color: #d1a4ff;
+        }
+
+        .bubble-content {
+          white-space: pre-wrap;
+          word-break: break-all;
+        }
+
+        /* Working Memory Panel */
+        .working-mem-panel {
+          display: flex;
+          flex-direction: column;
+        }
+
+        .working-table {
+          display: flex;
+          flex-direction: column;
+          border: 1px solid rgba(138, 43, 226, 0.1);
+          border-radius: 6px;
+          background: rgba(3, 5, 10, 0.45);
+          overflow: hidden;
+        }
+
+        .working-table-header {
+          display: grid;
+          grid-template-columns: 100px 1fr 100px;
+          gap: 12px;
+          background: rgba(138, 43, 226, 0.06);
+          border-bottom: 1px solid rgba(138, 43, 226, 0.15);
+          padding: 8px 12px;
+          font-size: 10px;
+          font-weight: 800;
+          color: #d1a4ff;
+          letter-spacing: 0.5px;
+          align-items: center;
+        }
+
+        .clear-all-wm-btn {
+          background: transparent;
+          border: 1px solid rgba(255, 95, 86, 0.25);
+          color: #ff5f56;
+          border-radius: 3px;
+          font-size: 9px;
+          padding: 2px 6px;
+          cursor: pointer;
+          font-family: var(--font-mono);
+          transition: all 0.2s ease;
+          justify-self: end;
+        }
+
+        .clear-all-wm-btn:hover {
+          background: rgba(255, 95, 86, 0.08);
+          border-color: #ff5f56;
+        }
+
+        .working-table-row {
+          display: grid;
+          grid-template-columns: 100px 1fr 100px;
+          gap: 12px;
+          padding: 8px 12px;
+          border-bottom: 1px solid rgba(255,255,255,0.02);
+          font-size: 11px;
+          align-items: center;
+        }
+
+        .working-table-row:last-child {
+          border-bottom: none;
+        }
+
+        .wm-row-key {
+          font-weight: bold;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .wm-row-val {
+          color: #e2e8f0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .wm-row-actions {
+          display: flex;
+          gap: 6px;
+          justify-content: flex-end;
+        }
+
+        .wm-edit-btn-inline, .wm-del-btn-inline {
+          background: transparent;
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          color: hsl(var(--text-muted));
+          border-radius: 3px;
+          font-size: 9px;
+          padding: 2px 6px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          font-family: var(--font-mono);
+        }
+
+        .wm-edit-btn-inline:hover {
+          border-color: rgba(138, 43, 226, 0.35);
+          color: #d1a4ff;
+          background: rgba(138, 43, 226, 0.04);
+        }
+
+        .wm-del-btn-inline:hover {
+          border-color: rgba(255, 95, 86, 0.35);
+          color: #ff5f56;
+          background: rgba(255, 95, 86, 0.04);
+        }
+
+        .wm-save-btn, .wm-cancel-btn {
+          border: none;
+          font-size: 9px;
+          padding: 2px 6px;
+          border-radius: 3px;
+          cursor: pointer;
+          font-family: var(--font-mono);
+        }
+
+        .wm-save-btn {
+          background: hsl(var(--color-green));
+          color: hsl(var(--bg-primary));
+        }
+
+        .wm-cancel-btn {
+          background: rgba(255, 255, 255, 0.08);
+          color: hsl(var(--text-muted));
+        }
+
+        /* Consolidation Panel */
+        .consolidation-panel {
+          display: flex;
+          flex-direction: column;
         }
       `}</style>
     </div>

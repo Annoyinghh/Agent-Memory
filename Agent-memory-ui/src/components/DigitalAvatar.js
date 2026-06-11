@@ -316,6 +316,11 @@ export default function DigitalAvatar() {
     let dustGeometry = null;
     let dustSpeeds = [];
 
+    // Forehead Elven Tiara (额饰) Mesh references
+    let tiaraGroup = null;
+    let tiaraCrown = null;
+    let tiaraPendant = null;
+
     // Load glTF model dynamically to avoid Next.js SSR build errors
     import('three/examples/jsm/loaders/GLTFLoader').then(({ GLTFLoader }) => {
       const loader = new GLTFLoader();
@@ -404,6 +409,68 @@ export default function DigitalAvatar() {
           const scale = 2.45 / maxDim; // slightly larger zoom
           headGeometry.scale(scale, scale, scale);
 
+          // Procedurally shape ears into pointy elf ears (fantasy elf/Lord of the Rings style)
+          for (let i = 0; i < count; i++) {
+            const vx = posAttr.getX(i);
+            const vy = posAttr.getY(i);
+            const vz = posAttr.getZ(i);
+
+            // Left ear and Right ear boundary checks in scaled space
+            // Exclude the ear root and temple by requiring Math.abs(vx) > 0.81
+            const isLeftEar = (vx > 0.81 && vy >= -0.36 && vy <= 0.24 && vz >= -0.46 && vz <= 0.26);
+            const isRightEar = (vx < -0.81 && vy >= -0.36 && vy <= 0.24 && vz >= -0.46 && vz <= 0.26);
+
+            if (isLeftEar || isRightEar) {
+              // Calculate weights based on how far outer (X) and how far upper (Y) the vertex is
+              const factorX = (Math.abs(vx) - 0.81) / 0.18; // normalized X
+              const factorY = (vy - (-0.36)) / 0.60;
+              
+              // Non-linear weight curve to make the tip of the ear pointed and sharp
+              const earWeight = Math.pow(Math.max(0.0, factorX), 1.2) * Math.pow(Math.max(0.0, factorY), 1.1);
+              
+              if (earWeight > 0.0) {
+                // Pointy ears: stretch outwards (X), upwards (Y), and sweep backwards (-Z)
+                const newX = vx + Math.sign(vx) * 0.25 * earWeight; // elven stretch outwards
+                const newY = vy + 0.22 * earWeight;                 // stretch upwards
+                const newZ = vz - 0.22 * earWeight;                 // sweep back
+                
+                posAttr.setXYZ(i, newX, newY, newZ);
+              }
+            }
+          }
+          posAttr.needsUpdate = true;
+
+          // Procedurally shape nose into a delicate, pointed elven nose tip
+          for (let i = 0; i < count; i++) {
+            const vx = posAttr.getX(i);
+            const vy = posAttr.getY(i);
+            const vz = posAttr.getZ(i);
+
+            // Bounding box for nose tip region in centered/scaled space
+            const isNoseTip = (Math.abs(vx) <= 0.15 && vy >= -0.38 && vy <= -0.16 && vz >= 1.0 && vz <= 1.23);
+            if (isNoseTip) {
+              const dx = vx / 0.14;
+              const dy = (vy - (-0.27)) / 0.11;
+              const dz = (vz - 1.225) / 0.225;
+              const distSq = dx * dx + dy * dy + dz * dz;
+              
+              if (distSq < 1.0) {
+                const noseWeight = Math.pow(1.0 - Math.sqrt(distSq), 1.5);
+                if (noseWeight > 0.0) {
+                  // Pointy nose: pull forward (Z), narrow slightly (X), and lift up slightly (Y)
+                  const newX = vx * (1.0 - 0.20 * noseWeight);
+                  const newY = vy + 0.012 * noseWeight;
+                  const newZ = vz + 0.038 * noseWeight;
+                  
+                  posAttr.setXYZ(i, newX, newY, newZ);
+                }
+              }
+            }
+          }
+          posAttr.needsUpdate = true;
+          headGeometry.computeVertexNormals(); // recompute normals for correct backing glow
+
+
           console.log("[DigitalAvatar] Loader Success - centerX:", centerX.toFixed(4), "centerY:", centerY.toFixed(4), "centerZ:", centerZ.toFixed(4), "scale:", scale.toFixed(6));
           console.log("[DigitalAvatar] Loader Success - vertex 1601 pos:", posAttr.getX(1601).toFixed(4), posAttr.getY(1601).toFixed(4), posAttr.getZ(1601).toFixed(4));
 
@@ -477,11 +544,11 @@ export default function DigitalAvatar() {
             headGeometry.setIndex(new THREE.BufferAttribute(new Uint32Array(newIndices), 1));
           }
 
-          // Generate colors based on normal vector (front is cyan, sides/back are dark blue, no purple!)
+          // Generate colors based on normal vector: Elven Silver-White & Celestial Cyan (no dark purple)
           const colorsArr = new Float32Array(count * 3);
-          const colorCyan = new THREE.Color(0x00f2fe);
-          const colorBlue = new THREE.Color(0x0077ff);
-          const colorDarkBlue = new THREE.Color(0x001144); // pure deep blue, no purple
+          const colorSilverWhite = new THREE.Color(0xfafcff); // pure celestial silver white
+          const colorSoftCyan = new THREE.Color(0x66eaff);    // glowing elven cyan highlight
+          const colorDeepBlue = new THREE.Color(0x000c24);    // deep midnight space blue shadow
 
           const bottomY = (thresholdY - centerY) * scale;
           const fadeRange = 0.24; // smooth fade-out over 0.24 units of height
@@ -500,12 +567,12 @@ export default function DigitalAvatar() {
               const nz = normAttr ? normAttr.getZ(i) : 0;
               const forwardRatio = Math.max(0.0, Math.min(1.0, nz));
               
-              if (forwardRatio > 0.5) {
-                // Front parts: mix blue and cyan
-                baseColor.lerpColors(colorBlue, colorCyan, (forwardRatio - 0.5) * 2.0);
+              if (forwardRatio > 0.55) {
+                // Front and center face parts: lerp between glowing celestial cyan and silver-white
+                baseColor.lerpColors(colorSoftCyan, colorSilverWhite, (forwardRatio - 0.55) * 2.2);
               } else {
-                // Side parts: mix dark blue and blue
-                baseColor.lerpColors(colorDarkBlue, colorBlue, forwardRatio * 2.0);
+                // Shadow/sides parts: lerp between deep midnight blue and celestial cyan
+                baseColor.lerpColors(colorDeepBlue, colorSoftCyan, forwardRatio * 1.8);
               }
               
               // Fade back of head slightly
@@ -742,6 +809,54 @@ export default function DigitalAvatar() {
           
           dustPoints = new THREE.Points(dustGeometry, dustMaterial);
           scene.add(dustPoints);
+
+          // Create the Elven Forehead Tiara/Circlet (额饰) Mesh Group
+          tiaraGroup = new THREE.Group();
+          
+          // 1. Double arch tiara frame surrounding the forehead
+          const tiaraCurveLeft = new THREE.CatmullRomCurve3([
+            new THREE.Vector3(0.0, 0.56, 0.77),     // center top peak
+            new THREE.Vector3(0.32, 0.52, 0.73),    // arch down
+            new THREE.Vector3(0.55, 0.44, 0.60),    // wrap temple
+            new THREE.Vector3(0.72, 0.26, 0.38)     // wrap side ear root
+          ]);
+          const tiaraCurveRight = new THREE.CatmullRomCurve3([
+            new THREE.Vector3(0.0, 0.56, 0.77),
+            new THREE.Vector3(-0.32, 0.52, 0.73),
+            new THREE.Vector3(-0.55, 0.44, 0.60),
+            new THREE.Vector3(-0.72, 0.26, 0.38)
+          ]);
+          
+          const tubeGeoLeft = new THREE.TubeGeometry(tiaraCurveLeft, 32, 0.007, 8, false);
+          const tubeGeoRight = new THREE.TubeGeometry(tiaraCurveRight, 32, 0.007, 8, false);
+          
+          const tiaraMaterial = new THREE.MeshBasicMaterial({
+            color: 0xeeffff, 
+            transparent: true,
+            opacity: 0.9,
+            blending: THREE.AdditiveBlending
+          });
+          
+          const archLeft = new THREE.Mesh(tubeGeoLeft, tiaraMaterial);
+          const archRight = new THREE.Mesh(tubeGeoRight, tiaraMaterial);
+          tiaraGroup.add(archLeft);
+          tiaraGroup.add(archRight);
+          
+          // 2. Diamond pendant hanging between the eyes
+          // Geometry coordinates sit at X=0, Y=0.34, Z=0.88 (centered between brows)
+          const diamondGeo = new THREE.ConeGeometry(0.024, 0.065, 4);
+          diamondGeo.rotateX(Math.PI); // flip upside down
+          const pendantMaterial = new THREE.MeshBasicMaterial({
+            color: 0x66faff, // glowing cyan diamond
+            transparent: true,
+            opacity: 0.95,
+            blending: THREE.AdditiveBlending
+          });
+          tiaraPendant = new THREE.Mesh(diamondGeo, pendantMaterial);
+          tiaraPendant.position.set(0.0, 0.40, 0.82);
+          tiaraGroup.add(tiaraPendant);
+          
+          scene.add(tiaraGroup);
  
           // Start loop
           animate();
@@ -917,6 +1032,17 @@ export default function DigitalAvatar() {
           posAttr.setZ(i, baseZ + offsetZ);
         }
         posAttr.needsUpdate = true;
+      }
+
+      // Sync elven tiara rotation and floating translations with the head points
+      if (tiaraGroup && headPoints) {
+        tiaraGroup.position.copy(headPoints.position);
+        tiaraGroup.rotation.copy(headPoints.rotation);
+        
+        // Add subtle diamond pendant shine oscillation
+        if (tiaraPendant) {
+          tiaraPendant.material.opacity = 0.85 + Math.sin(time * 6.0) * 0.15;
+        }
       }
 
       // Animate ambient data dust particles (rising quantum memory dust)

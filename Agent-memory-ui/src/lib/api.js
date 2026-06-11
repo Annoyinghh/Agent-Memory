@@ -9,6 +9,9 @@ async function request(path, options = {}) {
   const url = `${BASE_URL}${path}`;
   const headers = {
     'Content-Type': 'application/json',
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    'Pragma': 'no-cache',
+    'Expires': '0',
     ...options.headers,
   };
 
@@ -131,5 +134,98 @@ export const api = {
     request('/api/memory/delete', {
       method: 'DELETE',
       body: JSON.stringify({ namespace, source_prefix: sourcePrefix }),
+    }),
+
+  /**
+   * Get short term dialog memory history
+   * @param {string} namespace
+   * @returns {Promise<{namespace: string, history: Array<{role: string, content: string, timestamp?: number}>}>}
+   */
+  getShortTermMemory: (namespace) =>
+    request(`/api/memory/short_term?namespace=${encodeURIComponent(namespace)}`, {
+      method: 'GET',
+    }),
+
+  /**
+   * Add a dialogue turn to short term memory
+   * @param {string} namespace
+   * @param {string} role
+   * @param {string} content
+   * @returns {Promise<{namespace: string, message: string}>}
+   */
+  addShortTermMemory: (namespace, role, content) =>
+    request('/api/memory/short_term', {
+      method: 'POST',
+      body: JSON.stringify({ namespace, role, content }),
+    }),
+
+  /**
+   * Delete or clear short term dialog memory
+   * @param {string} namespace
+   * @param {number} [index] - Optional. If provided, deletes specific turn. Otherwise clears all.
+   * @returns {Promise<{namespace: string, message: string}>}
+   */
+  deleteShortTermMemory: (namespace, index = null) => {
+    const hasIndex = index !== null && index !== undefined && index !== '';
+    const url = hasIndex 
+      ? `/api/memory/short_term?namespace=${encodeURIComponent(namespace)}&index=${index}`
+      : `/api/memory/short_term?namespace=${encodeURIComponent(namespace)}`;
+    console.log('[API Client] deleteShortTermMemory URL:', url);
+    return request(url, { method: 'DELETE' });
+  },
+
+  /**
+   * List working memory state (scratchpad)
+   * @param {string} namespace
+   * @returns {Promise<{namespace: string, state: Record<string, string>}>}
+   */
+  listWorkingMemory: (namespace) =>
+    request(`/api/memory/working/list?namespace=${encodeURIComponent(namespace)}`, {
+      method: 'GET',
+    }),
+
+  /**
+   * Write a key-value pair to working memory
+   * @param {string} namespace
+   * @param {string} key
+   * @param {string} value
+   * @returns {Promise<{message: string}>}
+   */
+  writeWorkingMemory: (namespace, key, value) =>
+    request('/api/memory/working', {
+      method: 'POST',
+      body: JSON.stringify({ namespace, key, value }),
+    }),
+
+  /**
+   * Delete a key from working memory
+   * @param {string} namespace
+   * @param {string} key
+   * @returns {Promise<{message: string}>}
+   */
+  deleteWorkingMemory: (namespace, key) =>
+    request(`/api/memory/working?namespace=${encodeURIComponent(namespace)}&key=${encodeURIComponent(key)}`, {
+      method: 'DELETE',
+    }),
+
+  /**
+   * Clear all working memory keys for a namespace
+   * @param {string} namespace
+   * @returns {Promise<{message: string}>}
+   */
+  clearWorkingMemory: (namespace) =>
+    request(`/api/memory/working/clear?namespace=${encodeURIComponent(namespace)}`, {
+      method: 'DELETE',
+    }),
+
+  /**
+   * Consolidate short term memories into long term memories
+   * @param {string} namespace
+   * @returns {Promise<{namespace: string, id: string|null, message: string}>}
+   */
+  consolidateMemory: (namespace) =>
+    request('/api/memory/consolidate', {
+      method: 'POST',
+      body: JSON.stringify({ namespace }),
     }),
 };
