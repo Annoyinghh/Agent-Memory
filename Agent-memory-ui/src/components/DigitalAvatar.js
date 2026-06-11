@@ -1,0 +1,883 @@
+'use client';
+
+import React, { useEffect, useRef, useState } from 'react';
+import * as THREE from 'three';
+import { useApp } from '@/context/AppContext';
+
+export default function DigitalAvatar() {
+  const containerRef = useRef(null);
+  const { lastEvent, stats, avatarMuted } = useApp();
+  
+  const [subtitle, setSubtitle] = useState('');
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [speechText, setSpeechText] = useState('全息脑记忆系统连接成功。核心数据载入就绪。');
+  const [isModelLoaded, setIsModelLoaded] = useState(false);
+  
+  const isSpeakingRef = useRef(false);
+  const isTypingRef = useRef(false);
+  const isSpeakingAudioRef = useRef(false);
+  const synthRef = useRef(null);
+  const utteranceRef = useRef(null);
+  const hasSpokenFirstTimeRef = useRef(false);
+
+  // Helper to sync speaking status from both audio speech and typewriter typing
+  const updateSpeakingState = () => {
+    const active = isTypingRef.current || isSpeakingAudioRef.current;
+    console.log("[DigitalAvatar] updateSpeakingState - active:", active, "isTyping:", isTypingRef.current, "isSpeakingAudio:", isSpeakingAudioRef.current);
+    setIsSpeaking(active);
+    isSpeakingRef.current = active;
+  };
+
+  // Define speech texts based on event types
+  useEffect(() => {
+    if (!lastEvent) return;
+
+    let text = '';
+    const totalNs = Object.keys(stats.namespaces || {}).length;
+    
+    switch (lastEvent.type) {
+      case 'init_silent':
+        text = '';
+        break;
+      case 'init':
+        text = `全息助手系统初始化完成。核心连接就绪，当前数据库包含 ${totalNs} 个命名空间，共计 ${stats.total_chunks} 个知识点分块。随时待命。`;
+        break;
+      case 'online':
+        text = `网络同步已就绪。检测到本地记忆库状态良好，总内存区块：${stats.total_chunks} 个，分布于 ${totalNs} 个命名空间中。核心健康度 100%。`;
+        break;
+      case 'insert':
+        text = `检测到知识存入事件！已向命名空间 [ ${lastEvent.namespace || '默认'} ] 成功注入一条来源于 [ ${lastEvent.source || '未知'} ] 的新记忆。区块索引已同步更新。`;
+        break;
+      case 'delete':
+        text = `警报：遗忘指令已执行。已从命名空间 [ ${lastEvent.namespace || '默认'} ] 中擦除指定记忆节点。受影响的分块数量已从底层同步扣除。`;
+        break;
+      case 'snapshot':
+        text = `注意，高优先级快照已冷冻！已为命名空间 [ ${lastEvent.namespace || '默认'} ] 捕获了当前的认知边界与核心架构快照。后续 Agent 检索将优先以此为准。`;
+        break;
+      default:
+        text = lastEvent.message || '系统状态更新完毕。';
+    }
+
+    setSpeechText(text);
+  }, [lastEvent, stats]);
+
+  // Intercept and swallow SpeechSynthesis errors to prevent Next.js red crash overlay
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const originalError = console.error;
+    console.error = (...args) => {
+      const isSpeechError = args.some(arg => 
+        (typeof arg === 'string' && (arg.includes('Speech synthesis') || arg.includes('speechSynthesis'))) ||
+        (arg && typeof arg === 'object' && (
+          (arg.message && (arg.message.includes('Speech synthesis') || arg.message.includes('speechSynthesis'))) ||
+          (arg.type === 'error' && arg.target && arg.target instanceof SpeechSynthesisUtterance)
+        ))
+      );
+      if (isSpeechError) {
+        console.warn('[Speech Intercepted]', ...args);
+        return;
+      }
+      originalError.apply(console, args);
+    };
+    return () => {
+      console.error = originalError;
+    };
+  }, []);
+
+  // Run Speech synthesis when speechText changes
+  useEffect(() => {
+    if (!isModelLoaded) return;
+    if (typeof window === 'undefined') return;
+    synthRef.current = window.speechSynthesis;
+
+    if (!speechText) {
+      isSpeakingAudioRef.current = false;
+      updateSpeakingState();
+      return;
+    }
+
+    if (synthRef.current) {
+      try {
+        synthRef.current.cancel();
+      } catch (err) {
+        // Silently catch browser cancellation bugs
+      }
+    }
+
+    if (!avatarMuted && speechText && synthRef.current) {
+      isSpeakingAudioRef.current = true;
+      updateSpeakingState();
+
+      const utterance = new SpeechSynthesisUtterance(speechText);
+      utteranceRef.current = utterance;
+      
+      utterance.onstart = () => {
+        hasSpokenFirstTimeRef.current = true;
+      };
+
+      const voices = synthRef.current.getVoices();
+      let zhVoice = voices.find(v => v.lang.includes('zh') || v.lang.includes('CN'));
+      
+      const preferredVoices = ['Xiaoxiao', 'Yunxi', 'Tingting', 'Google', 'Lando'];
+      for (const name of preferredVoices) {
+        const found = voices.find(v => (v.lang.includes('zh') || v.lang.includes('CN')) && v.name.includes(name));
+        if (found) {
+          zhVoice = found;
+          break;
+        }
+      }
+
+      if (zhVoice) {
+        utterance.voice = zhVoice;
+      }
+      utterance.pitch = 1.0;
+      utterance.rate = 1.0;
+
+      utterance.onend = () => {
+        isSpeakingAudioRef.current = false;
+        updateSpeakingState();
+      };
+
+      utterance.onerror = (e) => {
+        if (e.error !== 'interrupted' && e.error !== 'canceled') {
+          console.warn('Speech synthesis minor warning:', e.error);
+        }
+        isSpeakingAudioRef.current = false;
+        updateSpeakingState();
+      };
+
+      try {
+        synthRef.current.speak(utterance);
+      } catch (err) {
+        isSpeakingAudioRef.current = false;
+        updateSpeakingState();
+      }
+    } else {
+      isSpeakingAudioRef.current = false;
+      updateSpeakingState();
+    }
+  }, [speechText, avatarMuted, isModelLoaded]);
+
+  // Autoplay voice fallback on first interaction
+  useEffect(() => {
+    if (!isModelLoaded) return;
+    if (typeof window === 'undefined') return;
+    const handleFirstInteraction = () => {
+      if (!hasSpokenFirstTimeRef.current && speechText) {
+        hasSpokenFirstTimeRef.current = true;
+        if (synthRef.current && !avatarMuted) {
+          try {
+            synthRef.current.cancel();
+            const utterance = new SpeechSynthesisUtterance(speechText);
+            utteranceRef.current = utterance;
+            
+            const voices = synthRef.current.getVoices();
+            let zhVoice = voices.find(v => v.lang.includes('zh') || v.lang.includes('CN'));
+            const preferredVoices = ['Xiaoxiao', 'Yunxi', 'Tingting', 'Google', 'Lando'];
+            for (const name of preferredVoices) {
+              const found = voices.find(v => (v.lang.includes('zh') || v.lang.includes('CN')) && v.name.includes(name));
+              if (found) {
+                zhVoice = found;
+                break;
+              }
+            }
+            if (zhVoice) utterance.voice = zhVoice;
+            utterance.pitch = 1.0;
+            utterance.rate = 1.0;
+            
+            utterance.onstart = () => {
+              hasSpokenFirstTimeRef.current = true;
+            };
+            utterance.onend = () => {
+              isSpeakingAudioRef.current = false;
+              updateSpeakingState();
+            };
+            utterance.onerror = () => {
+              isSpeakingAudioRef.current = false;
+              updateSpeakingState();
+            };
+            
+            isSpeakingAudioRef.current = true;
+            updateSpeakingState();
+            synthRef.current.speak(utterance);
+          } catch (e) {
+            console.warn('First interaction speech failed:', e);
+            isSpeakingAudioRef.current = false;
+            updateSpeakingState();
+          }
+        }
+      }
+    };
+    window.addEventListener('click', handleFirstInteraction);
+    window.addEventListener('touchstart', handleFirstInteraction);
+    return () => {
+      window.removeEventListener('click', handleFirstInteraction);
+      window.removeEventListener('touchstart', handleFirstInteraction);
+    };
+  }, [speechText, avatarMuted, isModelLoaded]);
+
+  // Typewriter effect
+  useEffect(() => {
+    if (!isModelLoaded) return;
+    if (!speechText) {
+      setSubtitle('全息系统已连接，控制端就绪。');
+      isTypingRef.current = false;
+      updateSpeakingState();
+      return;
+    }
+    
+    isTypingRef.current = true;
+    updateSpeakingState();
+
+    let index = 0;
+    setSubtitle('');
+    const interval = setInterval(() => {
+      index++;
+      setSubtitle(speechText.slice(0, index));
+      if (index >= speechText.length) {
+        clearInterval(interval);
+        isTypingRef.current = false;
+        updateSpeakingState();
+      }
+    }, 120);
+
+    return () => clearInterval(interval);
+  }, [speechText, isModelLoaded]);
+
+  // Three.js 3D Loaded Holographic Head implementation
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const width = containerRef.current.clientWidth;
+    const height = containerRef.current.clientHeight;
+
+    const scene = new THREE.Scene();
+    
+    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
+    camera.position.z = 4.2;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    containerRef.current.appendChild(renderer.domElement);
+
+    // Particle texture
+    const canvas = document.createElement('canvas');
+    canvas.width = 16;
+    canvas.height = 16;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createRadialGradient(8, 8, 0, 8, 8, 8);
+    grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+    grad.addColorStop(0.3, 'rgba(255, 255, 255, 0.95)');
+    grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 16, 16);
+    const texture = new THREE.CanvasTexture(canvas);
+
+    // Track mouse relative coordinates
+    const mouse = { x: 0, y: 0 };
+    const handleMouseMove = (event) => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+
+    let animId = null;
+    let clock = new THREE.Clock();
+    let headPoints = null;
+    let headWireframe = null;
+    let headSolid = null;
+    let pointsShaderMaterial = null;
+    let originalPositions = null;
+    let headGeometry = null;
+    const avatarState = { isVertexVisible: null };
+
+    // Load glTF model dynamically to avoid Next.js SSR build errors
+    import('three/examples/jsm/loaders/GLTFLoader').then(({ GLTFLoader }) => {
+      const loader = new GLTFLoader();
+      loader.load('/female_head_final.glb', (gltf) => {
+          let headMesh = null;
+          // Prefer mesh with morph targets (the face mesh in facecap model)
+          gltf.scene.traverse((child) => {
+            if (child.isMesh && child.morphTargetInfluences && child.morphTargetInfluences.length > 0) {
+              headMesh = child;
+            }
+          });
+          if (!headMesh) {
+            gltf.scene.traverse((child) => {
+              if (child.isMesh && !headMesh) headMesh = child;
+            });
+          }
+
+          if (headMesh) {
+          headGeometry = headMesh.geometry;
+          // Apply corrective rotation to orient the raw geometry:
+          // Face points along +Z, top of head along +Y, chin along -Y
+          headGeometry.rotateX(Math.PI / 2);
+          headGeometry.center();
+          headGeometry.computeBoundingBox();
+          
+          const oldBbox = headGeometry.boundingBox;
+          const minY = oldBbox.min.y;
+          const maxY = oldBbox.max.y;
+          const height = maxY - minY;
+          
+          // Female facecap model is already just a head, keep all vertices
+          const thresholdY = minY;
+
+          const posAttr = headGeometry.attributes.position;
+          const normAttr = headGeometry.attributes.normal;
+          const count = posAttr.count;
+          
+          // Compute bounding box of all vertices to scale/center specifically for the head
+          let minX = Infinity, maxX = -Infinity;
+          let keptMinY = Infinity, keptMaxY = -Infinity;
+          let minZ = Infinity, maxZ = -Infinity;
+          
+          avatarState.isVertexVisible = new Uint8Array(count);
+
+          for (let i = 0; i < count; i++) {
+            const vx = posAttr.getX(i);
+            const vy = posAttr.getY(i);
+            const vz = posAttr.getZ(i);
+
+            const visible = (vy >= thresholdY);
+            avatarState.isVertexVisible[i] = visible ? 1 : 0;
+            
+            if (visible) {
+              if (vx < minX) minX = vx;
+              if (vx > maxX) maxX = vx;
+              if (vy < keptMinY) keptMinY = vy;
+              if (vy > keptMaxY) keptMaxY = vy;
+              if (vz < minZ) minZ = vz;
+              if (vz > maxZ) maxZ = vz;
+            }
+          }
+
+          // Center relative to the head bounding box
+          const centerX = (minX + maxX) / 2;
+          const centerY = (keptMinY + keptMaxY) / 2;
+          const centerZ = (minZ + maxZ) / 2;
+
+          for (let i = 0; i < count; i++) {
+            if (avatarState.isVertexVisible[i]) {
+              posAttr.setX(i, posAttr.getX(i) - centerX);
+              posAttr.setY(i, posAttr.getY(i) - centerY);
+              posAttr.setZ(i, posAttr.getZ(i) - centerZ);
+            } else {
+              posAttr.setX(i, 0);
+              posAttr.setY(i, 0);
+              posAttr.setZ(i, 0);
+            }
+          }
+
+          const headWidth = maxX - minX;
+          const headHeight = keptMaxY - keptMinY;
+          const headDepth = maxZ - minZ;
+          const maxDim = Math.max(headWidth, headHeight, headDepth);
+          
+           // Scale based on head dimensions to zoom in
+          const scale = 2.45 / maxDim; // slightly larger zoom
+          headGeometry.scale(scale, scale, scale);
+
+          console.log("[DigitalAvatar] Loader Success - centerX:", centerX.toFixed(4), "centerY:", centerY.toFixed(4), "centerZ:", centerZ.toFixed(4), "scale:", scale.toFixed(6));
+          console.log("[DigitalAvatar] Loader Success - vertex 1601 pos:", posAttr.getX(1601).toFixed(4), posAttr.getY(1601).toFixed(4), posAttr.getZ(1601).toFixed(4));
+
+          // Store initial positions for voice ripple (extract X,Y,Z cleanly for interleaved attributes)
+          originalPositions = new Float32Array(count * 3);
+          for (let i = 0; i < count; i++) {
+            originalPositions[i * 3] = posAttr.getX(i);
+            originalPositions[i * 3 + 1] = posAttr.getY(i);
+            originalPositions[i * 3 + 2] = posAttr.getZ(i);
+          }
+
+          // Filter index buffer to remove any triangles using hidden vertices
+          const indexAttr = headGeometry.index;
+          if (indexAttr) {
+            const oldIndices = indexAttr.array;
+            const newIndices = [];
+            for (let i = 0; i < oldIndices.length; i += 3) {
+              const idx0 = oldIndices[i];
+              const idx1 = oldIndices[i + 1];
+              const idx2 = oldIndices[i + 2];
+              
+              if (avatarState.isVertexVisible[idx0] && avatarState.isVertexVisible[idx1] && avatarState.isVertexVisible[idx2]) {
+                newIndices.push(idx0, idx1, idx2);
+              }
+            }
+            headGeometry.setIndex(new THREE.BufferAttribute(new Uint32Array(newIndices), 1));
+          }
+
+          // Generate colors based on normal vector (front is cyan, sides/back are dark blue, no purple!)
+          const colorsArr = new Float32Array(count * 3);
+          const colorCyan = new THREE.Color(0x00f2fe);
+          const colorBlue = new THREE.Color(0x0077ff);
+          const colorDarkBlue = new THREE.Color(0x001144); // pure deep blue, no purple
+
+          const bottomY = (thresholdY - centerY) * scale;
+          const fadeRange = 0.24; // smooth fade-out over 0.24 units of height
+
+          const visibilityArr = new Float32Array(count);
+
+          for (let i = 0; i < count; i++) {
+            const zVal = posAttr.getZ(i);
+            const yVal = posAttr.getY(i);
+            const visible = avatarState.isVertexVisible[i];
+            
+            visibilityArr[i] = visible ? 1.0 : 0.0;
+            
+            let baseColor = new THREE.Color();
+            if (visible) {
+              const nz = normAttr ? normAttr.getZ(i) : 0;
+              const forwardRatio = Math.max(0.0, Math.min(1.0, nz));
+              
+              if (forwardRatio > 0.5) {
+                // Front parts: mix blue and cyan
+                baseColor.lerpColors(colorBlue, colorCyan, (forwardRatio - 0.5) * 2.0);
+              } else {
+                // Side parts: mix dark blue and blue
+                baseColor.lerpColors(colorDarkBlue, colorBlue, forwardRatio * 2.0);
+              }
+              
+              // Fade back of head slightly
+              if (zVal > 0) {
+                baseColor.multiplyScalar(0.75 + zVal * 0.25);
+              } else {
+                baseColor.multiplyScalar(0.75 + zVal * 0.75);
+              }
+              
+              // Smoothly fade out near the bottom boundary
+              if (yVal < bottomY + fadeRange) {
+                const fadeFactor = Math.max(0.0, (yVal - bottomY) / fadeRange);
+                baseColor.multiplyScalar(fadeFactor);
+              }
+            } else {
+              baseColor.setRGB(0, 0, 0); // Hide completely
+            }
+            colorsArr[i * 3] = baseColor.r;
+            colorsArr[i * 3 + 1] = baseColor.g;
+            colorsArr[i * 3 + 2] = baseColor.b;
+          }
+          headGeometry.setAttribute('aColor', new THREE.BufferAttribute(colorsArr, 3));
+          headGeometry.setAttribute('aVisibility', new THREE.BufferAttribute(visibilityArr, 1));
+
+          // Fresnel Glow Material for the solid head backing (depth mask)
+          const fresnelMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+              glowColor: { value: new THREE.Color(0x00a2ff) }, // pure blue glow
+              innerColor: { value: new THREE.Color(0x000511) }, // dark space blue
+              power: { value: 2.2 },
+              opacity: { value: 0.85 },
+              bottomY: { value: bottomY },
+              fadeRange: { value: fadeRange }
+            },
+            vertexShader: `
+              attribute float aVisibility;
+              varying float vVisibility;
+              varying vec3 vNormal;
+              varying vec3 vPositionNormal;
+              varying vec3 vPosition;
+              void main() {
+                vVisibility = aVisibility;
+                vNormal = normalize(normalMatrix * normal);
+                vPositionNormal = normalize((modelViewMatrix * vec4(position, 1.0)).xyz);
+                vPosition = position;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+              }
+            `,
+            fragmentShader: `
+              uniform vec3 glowColor;
+              uniform vec3 innerColor;
+              uniform float power;
+              uniform float opacity;
+              uniform float bottomY;
+              uniform float fadeRange;
+              varying float vVisibility;
+              varying vec3 vNormal;
+              varying vec3 vPositionNormal;
+              varying vec3 vPosition;
+              void main() {
+                if (vVisibility < 0.5) {
+                  discard;
+                }
+                vec3 viewDir = normalize(-vPositionNormal);
+                vec3 norm = normalize(vNormal);
+                float intensity = pow(1.0 - max(0.0, dot(norm, viewDir)), power);
+                
+                vec3 finalColor = mix(innerColor, glowColor, intensity);
+                
+                float alpha = mix(opacity * 0.45, opacity, intensity);
+                if (vPosition.y < bottomY + fadeRange) {
+                  float fadeFactor = max(0.0, (vPosition.y - bottomY) / fadeRange);
+                  alpha *= fadeFactor;
+                }
+                
+                gl_FragColor = vec4(finalColor, alpha);
+              }
+            `,
+            transparent: true,
+            depthWrite: true,
+            depthTest: true,
+            blending: THREE.NormalBlending,
+            polygonOffset: true,
+            polygonOffsetFactor: 1.0,
+            polygonOffsetUnits: 1.0
+          });
+
+          headSolid = new THREE.Mesh(headGeometry, fresnelMaterial);
+          scene.add(headSolid);
+
+          // Points (Point Cloud) using Custom Shader Material to discard mouth interior
+          pointsShaderMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+              uSize: { value: 0.024 },
+              uTexture: { value: texture }
+            },
+            vertexShader: `
+              uniform float uSize;
+              attribute float aVisibility;
+              attribute vec3 aColor;
+              varying float vVisibility;
+              varying vec3 vColor;
+              void main() {
+                vVisibility = aVisibility;
+                vColor = aColor;
+                vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                gl_PointSize = uSize * (300.0 / -mvPosition.z);
+                gl_Position = projectionMatrix * mvPosition;
+              }
+            `,
+            fragmentShader: `
+              uniform sampler2D uTexture;
+              varying float vVisibility;
+              varying vec3 vColor;
+              void main() {
+                if (vVisibility < 0.5) {
+                  discard;
+                }
+                vec4 texColor = texture2D(uTexture, gl_PointCoord);
+                if (texColor.a < 0.1) discard;
+                gl_FragColor = vec4(vColor * texColor.rgb, 0.92);
+              }
+            `,
+            transparent: true,
+            depthWrite: false,
+            depthTest: true,
+            blending: THREE.AdditiveBlending
+          });
+          headPoints = new THREE.Points(headGeometry, pointsShaderMaterial);
+          scene.add(headPoints);
+
+          // Wireframe Mesh using Custom Shader Material to discard mouth interior
+          const lineShaderMaterial = new THREE.ShaderMaterial({
+            vertexShader: `
+              attribute float aVisibility;
+              attribute vec3 aColor;
+              varying float vVisibility;
+              varying vec3 vColor;
+              void main() {
+                vVisibility = aVisibility;
+                vColor = aColor;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+              }
+            `,
+            fragmentShader: `
+              varying float vVisibility;
+              varying vec3 vColor;
+              void main() {
+                if (vVisibility < 0.5) {
+                  discard;
+                }
+                gl_FragColor = vec4(vColor, 0.42);
+              }
+            `,
+            wireframe: true,
+            transparent: true,
+            depthWrite: false,
+            depthTest: true,
+            blending: THREE.AdditiveBlending
+          });
+          headWireframe = new THREE.Mesh(headGeometry, lineShaderMaterial);
+          scene.add(headWireframe);
+
+          // Start loop
+          animate();
+          setIsModelLoaded(true);
+        }
+      }, undefined, (err) => {
+        console.warn('Failed to load 3D model:', err);
+      });
+    });
+    const animate = () => {
+      animId = requestAnimationFrame(animate);
+      
+      const time = clock.getElapsedTime();
+      const isSpeakingVal = isSpeakingRef.current;
+      
+      if (isSpeakingVal && Math.random() < 0.01) {
+        console.log("[DigitalAvatar] animate - mouth animating, talkCycle:", Math.sin(time * 14));
+      }
+
+      // Idle floating breath translations and rotations
+      const floatOffsetY = Math.sin(time * 1.2) * 0.04;
+      const floatTiltX = Math.sin(time * 0.6) * 0.02;
+      const floatTiltZ = Math.cos(time * 0.8) * 0.02;
+
+      // Interact with mouse (smooth look-at)
+      const targetRotX = -mouse.y * 0.35 + floatTiltX;
+      const targetRotY = mouse.x * 0.45;
+      const targetRotZ = floatTiltZ;
+
+      const lerpSpeed = 0.08;
+
+      if (headPoints && headWireframe && headGeometry) {
+        headPoints.position.y = floatOffsetY;
+        headWireframe.position.y = floatOffsetY;
+        if (headSolid) headSolid.position.y = floatOffsetY;
+
+        headPoints.rotation.x += (targetRotX - headPoints.rotation.x) * lerpSpeed;
+        headPoints.rotation.y += (targetRotY - headPoints.rotation.y) * lerpSpeed;
+        headPoints.rotation.z += (targetRotZ - headPoints.rotation.z) * lerpSpeed;
+
+        headWireframe.rotation.copy(headPoints.rotation);
+        if (headSolid) headSolid.rotation.copy(headPoints.rotation);
+
+        // Voice ripple effect on positions
+        const posAttr = headGeometry.attributes.position;
+        const count = posAttr.count;
+
+        for (let i = 0; i < count; i++) {
+          if (avatarState.isVertexVisible && avatarState.isVertexVisible[i] === 0) {
+            // Keep collapsed at origin, do not animate
+            posAttr.setXYZ(i, 0, 0, 0);
+            continue;
+          }
+          const baseX = originalPositions[i * 3];
+          const baseY = originalPositions[i * 3 + 1];
+          const baseZ = originalPositions[i * 3 + 2];
+          
+          let offsetY = 0;
+          let offsetZ = Math.sin(time * 4 + baseY * 3) * 0.006;
+
+          if (isSpeakingVal) {
+            // Lip sync: open and close mouth
+            // Using multiple frequencies (clamped to >= 0 to prevent geometry crossing)
+            const talkCycle = Math.max(0.0, Math.sin(time * 14) * 0.35 + Math.sin(time * 23) * 0.25 + Math.sin(time * 9) * 0.15 + 0.25);
+            
+            const distFromCenter = Math.abs(baseX);
+            // Mouth region for facecap model (now correctly oriented): center strip, front-facing
+            if (distFromCenter < 0.25 && baseZ > 0.8) {
+              const xFactor = Math.cos((distFromCenter / 0.25) * Math.PI * 0.5);
+              
+              // Lower lip/chin: Y from -0.78 to -0.62 (pull down when speaking)
+              if (baseY >= -0.78 && baseY < -0.62) {
+                const jawFactor = 1.0 - ((baseY - (-0.78)) / 0.16);
+                offsetY = -0.15 * talkCycle * xFactor * (0.3 + 0.7 * jawFactor);
+                offsetZ += 0.03 * talkCycle * xFactor;
+              }
+              // Upper lip: Y from -0.62 to -0.54 (pull up slightly when speaking)
+              else if (baseY >= -0.62 && baseY < -0.54) {
+                const lipFactor = ((-0.54) - baseY) / 0.08;
+                offsetY = 0.03 * talkCycle * xFactor * lipFactor;
+              }
+            }
+
+            if (pointsShaderMaterial) {
+              pointsShaderMaterial.uniforms.uSize.value = 0.032 + Math.sin(time * 20) * 0.003;
+            }
+          } else {
+            if (pointsShaderMaterial) {
+              pointsShaderMaterial.uniforms.uSize.value = 0.024 + Math.sin(time * 1.5) * 0.0015;
+            }
+          }
+
+          posAttr.setX(i, baseX);
+          posAttr.setY(i, baseY + offsetY);
+          posAttr.setZ(i, baseZ + offsetZ);
+
+          if (i === 1601 && isSpeakingVal && Math.random() < 0.05) {
+            console.log("[DigitalAvatar] Debug Vertex 1601 - baseX:", baseX.toFixed(4), "baseY:", baseY.toFixed(4), "baseZ:", baseZ.toFixed(4));
+          }
+        }
+        posAttr.needsUpdate = true;
+      }
+      
+      renderer.render(scene, camera);
+    };
+
+    const handleResize = () => {
+      if (!containerRef.current) return;
+      const w = containerRef.current.clientWidth;
+      const h = containerRef.current.clientHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    };
+
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('mousemove', handleMouseMove);
+      cancelAnimationFrame(animId);
+      if (containerRef.current && renderer.domElement) {
+        containerRef.current.removeChild(renderer.domElement);
+      }
+      
+      if (headGeometry) headGeometry.dispose();
+      texture.dispose();
+      if (headPoints) headPoints.material.dispose();
+      if (headWireframe) headWireframe.material.dispose();
+      if (headSolid) headSolid.material.dispose();
+    };
+  }, []);
+
+  return (
+    <div className="avatar-panel">
+      <div className="scanner-line"></div>
+      
+      {/* Symmetrical Sci-fi corner brackets inside panels */}
+      <div className="sci-corner corner-tr"></div>
+      <div className="sci-corner corner-bl"></div>
+
+      {/* 3D WebGL Canvas Holder */}
+      <div ref={containerRef} className="canvas-container" />
+
+      {/* Subtitles / Console Logs Display */}
+      <div className="console-wrapper">
+        <div className="terminal-header">
+          <span className="dot dot-red"></span>
+          <span className="dot dot-yellow"></span>
+          <span className="dot dot-green"></span>
+          <span className="console-label font-mono">NEURAL_AUDIO_FEED // SYS_OK</span>
+          <div className="speaker-wave-holder">
+            {isSpeaking && (
+              <div className="soundwave-container">
+                <div className="soundwave-bar animating"></div>
+                <div className="soundwave-bar animating"></div>
+                <div className="soundwave-bar animating"></div>
+                <div className="soundwave-bar animating"></div>
+                <div className="soundwave-bar animating"></div>
+                <div className="soundwave-bar animating"></div>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="console-text font-mono cursor-blink">
+          {subtitle || 'STANDBY_'}
+        </div>
+      </div>
+
+      <style jsx>{`
+        .avatar-panel {
+          position: relative;
+          width: 100%;
+          height: 100%;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: space-between;
+          padding: 12px;
+          overflow: hidden;
+          background: transparent;
+          border: none;
+          box-shadow: none;
+        }
+
+        /* Diagonal corner bracket decoration */
+        .sci-corner {
+          position: absolute;
+          width: 14px;
+          height: 14px;
+          border: 2px solid hsl(var(--color-cyan));
+          pointer-events: none;
+        }
+        .corner-tr {
+          top: 8px;
+          right: 8px;
+          border-left: none;
+          border-bottom: none;
+        }
+        .corner-bl {
+          bottom: 8px;
+          left: 8px;
+          border-right: none;
+          border-top: none;
+        }
+
+        .scanner-line {
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 2px;
+          background: linear-gradient(90deg, transparent, hsl(var(--color-cyan)), transparent);
+          box-shadow: 0 0 15px hsl(var(--color-cyan));
+          animation: scan-down 6s linear infinite;
+          opacity: 0.3;
+          z-index: 5;
+          pointer-events: none;
+        }
+
+        @keyframes scan-down {
+          0% { top: -5%; }
+          100% { top: 105%; }
+        }
+
+        .canvas-container {
+          width: 100%;
+          height: 100%;
+          position: absolute;
+          top: 0;
+          left: 0;
+          z-index: 1;
+        }
+
+        .console-wrapper {
+          position: relative;
+          bottom: 0;
+          width: 100%;
+          max-width: 100%;
+          background: rgba(5, 4, 3, 0.85);
+          border: 1px solid rgba(255, 187, 0, 0.2);
+          border-radius: 10px;
+          padding: 16px;
+          box-shadow: inset 0 0 15px rgba(255, 187, 0, 0.04), 0 10px 40px rgba(0, 0, 0, 0.8);
+          z-index: 100;
+          opacity: 0.48;
+          transition: opacity 0.3s ease;
+          margin-top: auto;
+        }
+
+        .console-wrapper:hover {
+          opacity: 1.0;
+        }
+
+        .console-label {
+          font-size: 10px;
+          color: hsl(var(--text-muted));
+          letter-spacing: 1px;
+          flex: 1;
+        }
+
+        .speaker-wave-holder {
+          height: 25px;
+          display: flex;
+          align-items: center;
+        }
+
+        .console-text {
+          font-size: 13px;
+          color: hsl(var(--color-cyan));
+          line-height: 1.6;
+          min-height: 48px;
+          white-space: pre-wrap;
+          word-break: break-all;
+          text-shadow: 0 0 8px rgba(255, 187, 0, 0.35);
+        }
+      `}</style>
+    </div>
+  );
+}

@@ -1,0 +1,314 @@
+/* 知识库管理系统全局样式与设计系统 - 金黑科幻 (Gold & Black Sci-Fi Theme) */
+
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap');
+
+:root {
+  /* HSL Color Palette - Gold & Black Theme */
+  --bg-primary: 20 15% 2%;       /* Obsidian Black */
+  --bg-secondary: 20 12% 4.5%;   /* Gold-tinted dark grey panel */
+  --bg-tertiary: 20 10% 8%;      /* Accent panel fill */
+  
+  --color-cyan: 42 100% 50%;     /* Cyber Gold (mapped from cyan to reuse layout selectors) */
+  --color-purple: 24 100% 50%;   /* Cyber Orange/Bronze (mapped from purple to reuse layout selectors) */
+  --color-pink: 355 100% 50%;    /* Alert Red */
+  --color-amber: 40 100% 50%;    /* Diagnostic Gold */
+  --color-green: 142 80% 50%;    /* Link Active Green */
+  --color-red: 355 90% 50%;      /* Critical Red */
+  
+  --text-primary: 42 30% 98%;    /* Off-white warm gold */
+  --text-muted: 42 12% 65%;      /* Warm grey */
+  --text-dark: 42 10% 25%;       /* Dark warm grey */
+  
+  --border-cyan: hsla(42, 100%, 50%, 0.25);
+  --border-purple: hsla(24, 100%, 50%, 0.2);
+  --border-glass: rgba(255, 187, 0, 0.06);
+  
+  --sidebar-width: 280px;
+  --header-height: 70px;
+  
+  --font-outfit: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Share Tech Mono', monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  background-color: hsl(var(--bg-primary));
+  color: hsl(var(--text-primary));
+  font-family: var(--font-outfit);
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Sci-fi background grid and scanline animations */
+body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-image: 
+    linear-gradient(rgba(255, 187, 0, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 187, 0, 0.02) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 102, 0, 0) 0%,
+    rgba(255, 102, 0, 0.015) 50%,
+    rgba(255, 187, 0, 0.015) 51%,
+    rgba(255, 187, 0, 0) 100%
+  );
+  background-size: 100% 200%;
+  animation: scanline 16s linear infinite;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: hsl(var(--bg-primary));
+}
+::-webkit-scrollbar-thumb {
+  background: hsla(42, 100%, 50%, 0.15);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--color-cyan));
+  box-shadow: 0 0 8px hsl(var(--color-cyan));
+}
+
+/* Layout Core */
+.layout-wrapper {
+  display: flex;
+  min-height: 100vh;
+  position: relative;
+  z-index: 10;
+}
+
+.main-content {
+  flex: 1;
+  margin-left: 0;
+  padding: 30px;
+  padding-top: calc(var(--header-height) + 30px);
+  min-height: 100vh;
+  position: relative;
+}
+
+/* Glassmorphism Card Style - Cyber edition */
+.glass-card {
+  background: rgba(8, 7, 5, 0.78);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid var(--border-glass);
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 
+    0 10px 40px -15px rgba(0, 0, 0, 0.95),
+    inset 0 1px 2px rgba(255, 187, 0, 0.05);
+  position: relative;
+  opacity: 0.38;
+  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), 
+              opacity 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), 
+              border-color 0.3s ease, 
+              box-shadow 0.3s ease;
+}
+
+/* Cybernetic corners on cards */
+.glass-card::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  width: 12px;
+  height: 12px;
+  border-top: 2px solid hsl(var(--color-cyan));
+  border-left: 2px solid hsl(var(--color-cyan));
+  border-top-left-radius: 12px;
+  pointer-events: none;
+  opacity: 0.5;
+  transition: opacity 0.3s ease;
+}
+
+.glass-card:hover::before {
+  opacity: 1;
+}
+
+.glass-card:hover {
+  opacity: 1.0;
+  transform: translateY(-2px);
+  border-color: rgba(255, 187, 0, 0.2);
+  box-shadow: 
+    0 20px 40px -10px rgba(255, 187, 0, 0.08),
+    0 0 20px -5px rgba(255, 187, 0, 0.1),
+    inset 0 1px 2px rgba(255, 255, 255, 0.05);
+}
+
+.glass-card-purple::before {
+  border-color: hsl(var(--color-purple));
+  border-top-left-radius: 12px;
+}
+
+.glass-card-purple:hover {
+  border-color: rgba(255, 102, 0, 0.25);
+  box-shadow: 
+    0 20px 40px -10px rgba(255, 102, 0, 0.1),
+    0 0 20px -5px rgba(255, 102, 0, 0.12),
+    inset 0 1px 2px rgba(255, 255, 255, 0.05);
+}
+
+/* Sci-fi radar target decoration behind head */
+.radar-background {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 420px;
+  height: 420px;
+  border: 1px dashed rgba(255, 187, 0, 0.08);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.radar-background::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(0deg);
+  width: 340px;
+  height: 340px;
+  border: 1px solid rgba(255, 102, 0, 0.06);
+  border-left-color: rgba(255, 187, 0, 0.3);
+  border-right-color: rgba(255, 187, 0, 0.3);
+  border-radius: 50%;
+  animation: rotate-radar-cw 25s linear infinite;
+}
+
+.radar-background::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(0deg);
+  width: 260px;
+  height: 260px;
+  border: 1px dotted rgba(255, 187, 0, 0.05);
+  border-top-color: rgba(255, 102, 0, 0.4);
+  border-bottom-color: rgba(255, 102, 0, 0.4);
+  border-radius: 50%;
+  animation: rotate-radar-ccw 18s linear infinite;
+}
+
+@keyframes rotate-radar-cw {
+  100% { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+@keyframes rotate-radar-ccw {
+  100% { transform: translate(-50%, -50%) rotate(-360deg); }
+}
+
+/* Animations */
+@keyframes scanline {
+  0% { background-position: 0% 0%; }
+  100% { background-position: 0% 200%; }
+}
+
+@keyframes pulse {
+  0% { transform: scale(0.95); opacity: 0.5; }
+  50% { transform: scale(1); opacity: 1; box-shadow: 0 0 10px currentColor; }
+  100% { transform: scale(0.95); opacity: 0.5; }
+}
+
+.pulse-indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+  animation: pulse 2s infinite ease-in-out;
+}
+
+.pulse-indicator.green {
+  background-color: hsl(var(--color-green));
+  color: hsl(var(--color-green) / 0.5);
+}
+
+.pulse-indicator.red {
+  background-color: hsl(var(--color-red));
+  color: hsl(var(--color-red) / 0.5);
+}
+
+/* Typewriter flashing cursor */
+.cursor-blink::after {
+  content: "▊";
+  animation: blink 1s step-start infinite;
+  margin-left: 2px;
+  color: hsl(var(--color-cyan));
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* Soundwave visualizer bars */
+.soundwave-container {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 25px;
+}
+
+.soundwave-bar {
+  width: 2px;
+  height: 3px;
+  background: linear-gradient(to top, hsl(var(--color-purple)), hsl(var(--color-cyan)));
+  border-radius: 1px;
+}
+
+.soundwave-bar.animating {
+  animation: audio-bounce 1.2s ease-in-out infinite alternate;
+}
+
+.soundwave-bar:nth-child(1) { animation-delay: 0.1s; }
+.soundwave-bar:nth-child(2) { animation-delay: 0.3s; }
+.soundwave-bar:nth-child(3) { animation-delay: 0.5s; }
+.soundwave-bar:nth-child(4) { animation-delay: 0.2s; }
+.soundwave-bar:nth-child(5) { animation-delay: 0.4s; }
+.soundwave-bar:nth-child(6) { animation-delay: 0.6s; }
+
+@keyframes audio-bounce {
+  0% { height: 3px; }
+  100% { height: 22px; }
+}
+
+/* Chart bars fills */
+.chart-fill-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, hsl(var(--color-purple)), hsl(var(--color-cyan)));
+  box-shadow: 0 0 8px rgba(255, 187, 0, 0.25);
+  transition: width 1s cubic-bezier(0.1, 0.8, 0.2, 1);
+}

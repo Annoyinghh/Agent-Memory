@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# Data
+Agent-Memory-Server/data/
+
+# Node
+Agent-memory-ui/node_modules/
+Agent-memory-ui/.next/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
