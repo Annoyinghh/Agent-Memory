@@ -80,23 +80,43 @@ python server.py
 }
 ```
 
-连接后 AI 可调用三个工具：
+连接后 AI 可调用以下工具：
 
 | 工具 | 说明 |
 |------|------|
-| `insert_memory(namespace, content, source)` | 写入一条记忆 |
-| `hybrid_search(namespace, query, top_k)` | 混合检索 |
+| `insert_memory(namespace, content, source, dedup_threshold)` | 写入一条长期记忆（支持语义去重） |
+| `update_memory(doc_id, namespace, content, source)` | 更新一条长期记忆 |
+| `hybrid_search(namespace, query, top_k)` | 混合检索长期记忆 |
+| `pack_context(namespace, query, max_tokens)` | 组装在 token 预算内的最优长期上下文 (XML格式) |
+| `add_short_term_memory(namespace, role, content)` | 添加一条短期对话记忆（滑动窗口） |
+| `get_short_term_memory(namespace)` | 获取当前 namespace 的短期记忆 |
+| `write_working_memory(namespace, key, value)` | 写入或更新工作记忆 (Scratchpad) |
+| `read_working_memory(namespace, key)` | 读取指定的工作记忆 |
+| `list_working_memory(namespace)` | 列出所有的工作记忆状态 |
+| `delete_working_memory(namespace, key)` | 删除指定的工作记忆 |
+| `clear_working_memory(namespace)` | 清空所有的工作记忆 |
+| `consolidate_memory(namespace)` | 调用大模型，将短期记忆总结提炼，转化为长期记忆 |
 | `freeze_snapshot(namespace, summary)` | 创建高优先级快照 |
 
 ## REST API
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/memory/insert` | 插入记忆 |
-| POST | `/api/memory/search` | 混合检索 |
+| POST | `/api/memory/insert` | 插入长期记忆 |
+| POST | `/api/memory/update` | 更新长期记忆 |
+| POST | `/api/memory/search` | 混合检索长期记忆 |
+| POST | `/api/memory/pack` | 组装在 token 预算内的最优上下文 (XML格式) |
 | GET | `/api/memory/search?namespace=&query=&top_k=` | GET 方式检索 |
+| POST | `/api/memory/short_term` | 添加短期对话记忆 |
+| GET | `/api/memory/short_term?namespace=` | 获取短期记忆列表 |
+| POST | `/api/memory/working` | 写入工作记忆 (Scratchpad) |
+| GET | `/api/memory/working?namespace=&key=` | 读取工作记忆 |
+| GET | `/api/memory/working/list?namespace=` | 获取工作记忆全量状态 |
+| DELETE | `/api/memory/working?namespace=&key=` | 删除工作记忆 |
+| DELETE | `/api/memory/working/clear?namespace=` | 清空工作记忆 |
+| POST | `/api/memory/consolidate` | 提炼短期记忆至长期记忆 |
 | POST | `/api/memory/snapshot` | 创建快照 |
-| DELETE | `/api/memory/delete` | 删除记忆（按 ID 或 source 前缀） |
+| DELETE | `/api/memory/delete` | 删除长期记忆（按 ID 或 source 前缀） |
 | GET | `/api/namespaces` | 列出所有命名空间 |
 | GET | `/api/stats` | 统计信息 |
 
@@ -147,7 +167,7 @@ Agent-Memory/
 
 ## 技术栈
 
-- **后端**：Python / FastAPI / MCP / ChromaDB / SQLite FTS5
+- **后端**：Python / FastAPI / MCP / ChromaDB / SQLite FTS5 / LiteLLM
 - **前端**：Next.js 16 / React 19 / Three.js / Tailwind CSS
 
 ## 开发路线图
@@ -156,17 +176,17 @@ Agent-Memory/
 
 | 功能 | 说明 | 状态 |
 |------|------|------|
-| 记忆更新 (Memory Update) | 按 doc_id 更新已有记忆的 content 和 source，当前只有 insert/delete | 待开发 |
-| 记忆去重 (Deduplication) | 写入时检测语义相似度，超过阈值自动合并或标记重复 | 待开发 |
-| 上下文打包器 (Context Packer) | 在 token 预算内，按重要性排序组装最优上下文，输出格式化 prompt 片段供 LLM 直接消费 | 待开发 |
+| 记忆更新 (Memory Update) | 按 doc_id 更新已有记忆的 content 和 source，当前只有 insert/delete | 已完成 |
+| 记忆去重 (Deduplication) | 写入时检测语义相似度，超过阈值自动合并或标记重复 | 已完成 |
+| 上下文打包器 (Context Packer) | 在 token 预算内，按重要性排序组装最优上下文，输出格式化 prompt 片段供 LLM 直接消费 | 已完成 |
 
 ### P1 — 分层记忆架构
 
 | 功能 | 说明 | 状态 |
 |------|------|------|
-| 短期记忆 (Short-term Memory) | 最近 N 轮对话的滑动窗口，易失性，不写 ChromaDB | 待开发 |
-| 工作记忆 (Working Memory) | 当前任务的上下文状态（Scratchpad），任务完成后可提炼为长期记忆 | 待开发 |
-| 记忆整合 (Memory Consolidation) | 将高频访问的短期记忆自动摘要为精简的长期记忆，类似"睡眠巩固" | 待开发 |
+| 短期记忆 (Short-term Memory) | 最近 N 轮对话的滑动窗口，易失性，不写 ChromaDB | 已完成 |
+| 工作记忆 (Working Memory) | 当前任务的上下文状态（Scratchpad），任务完成后可提炼为长期记忆 | 已完成 |
+| 记忆整合 (Memory Consolidation) | 将高频访问的短期记忆自动摘要为精简的长期记忆，类似"睡眠巩固" | 已完成 |
 
 ### P2 — 智能化管理
 

@@ -110,7 +110,7 @@ body::after {
 
 .main-content {
   flex: 1;
-  margin-left: 0;
+  margin-left: 68px;
   padding: 30px;
   padding-top: calc(var(--header-height) + 30px);
   min-height: 100vh;

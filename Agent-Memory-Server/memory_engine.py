@@ -2,7 +2,8 @@ import sqlite3
 import time
 import os
 import chromadb
-from typing import List, Dict, Any
+import litellm
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 
 class MemoryItem(BaseModel):
@@ -27,6 +28,10 @@ class MemoryEngine:
         self.chroma_client = chromadb.PersistentClient(path=os.path.join(db_dir, "chroma_db"))
         # We use a single collection, filtering by namespace via metadata
         self.collection = self.chroma_client.get_or_create_collection(name="agent_memory")
+        
+        # 3. Initialize Volatile Short-term Memory
+        self.short_term_window_size = 10
+        self._short_term_memory: Dict[str, List[Dict[str, Any]]] = {}
 
     def _init_sqlite(self):
         # Create FTS5 virtual table. FTS5 doesn't strictly support filtering by non-text columns efficiently 
@@ -36,10 +41,42 @@ class MemoryEngine:
                 id, namespace, content, source, timestamp UNINDEXED
             )
         ''')
+        # Create Working Memory table for key-value scratchpad storage
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS working_memory (
+                namespace TEXT,
+                key TEXT,
+                value TEXT,
+                timestamp INTEGER,
+                PRIMARY KEY (namespace, key)
+            )
+        ''')
         self.conn.commit()
 
-    def insert_memory(self, doc_id: str, namespace: str, content: str, source: str) -> str:
-        """Insert a memory chunk into both SQLite and ChromaDB."""
+    def insert_memory(self, doc_id: str, namespace: str, content: str, source: str, dedup_threshold: float = 0.0) -> str:
+        """Insert a memory chunk into both SQLite and ChromaDB, with optional deduplication."""
+        
+        # 0. Deduplication Check
+        if dedup_threshold > 0.0:
+            # We want to check for semantic similarity using Chroma
+            vector_results = self.collection.query(
+                query_texts=[content],
+                n_results=1,
+                where={"namespace": namespace}
+            )
+            
+            if vector_results and vector_results['ids'] and len(vector_results['ids'][0]) > 0:
+                existing_id = vector_results['ids'][0][0]
+                distance = vector_results['distances'][0][0]
+                # In Chroma L2, lower distance is more similar. 
+                # Let's map distance back to a 0.0-1.0 similarity score (simple heuristic used in hybrid_search)
+                similarity = max(0.0, 1.0 - (distance / 2.0))
+                
+                if similarity >= dedup_threshold:
+                    # It's a duplicate. Instead of inserting, update the existing one.
+                    self.update_memory(existing_id, namespace, content, source)
+                    return existing_id
+
         current_time = int(time.time())
         
         # 1. Insert into SQLite
@@ -62,6 +99,27 @@ class MemoryEngine:
         """A snapshot is a special high-priority memory."""
         # Source explicitly marked as 'snapshot'
         return self.insert_memory(doc_id, namespace, summary, source="snapshot")
+
+    def update_memory(self, doc_id: str, namespace: str, content: str, source: str) -> bool:
+        """Update an existing memory chunk in both SQLite and ChromaDB."""
+        current_time = int(time.time())
+
+        # 1. Update in SQLite (FTS5 doesn't support UPDATE easily, so we DELETE then INSERT)
+        self.cursor.execute("DELETE FROM memory_fts WHERE id = ?", (doc_id,))
+        self.cursor.execute(
+            "INSERT INTO memory_fts (id, namespace, content, source, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (doc_id, namespace, content, source, current_time)
+        )
+        self.conn.commit()
+
+        # 2. Update in ChromaDB
+        self.collection.update(
+            ids=[doc_id],
+            documents=[content],
+            metadatas=[{"namespace": namespace, "source": source, "timestamp": current_time}]
+        )
+        
+        return True
 
     def hybrid_search(self, namespace: str, query: str, top_k: int = 5) -> List[MemoryItem]:
         """Perform Hybrid Search: Keyword (FTS5) + Semantic (Chroma)."""
@@ -142,6 +200,166 @@ class MemoryEngine:
         # 4. Sort by final score
         final_list.sort(key=lambda x: x.score, reverse=True)
         return final_list[:top_k]
+
+    def _format_age(self, timestamp: int) -> str:
+        diff = int(time.time()) - timestamp
+        if diff < 60: return "just now"
+        if diff < 3600: return f"{diff // 60} mins ago"
+        if diff < 86400: return f"{diff // 3600} hours ago"
+        return f"{diff // 86400} days ago"
+        
+    def _get_relevance(self, score: float) -> str:
+        if score >= 1.5: return "critical"
+        if score >= 0.8: return "high"
+        if score >= 0.5: return "medium"
+        return "low"
+
+    def pack_context(self, namespace: str, query: str, max_tokens: int = 2000) -> str:
+        """
+        Assemble the most relevant context within a given token budget using LLM-friendly XML.
+        Approximate 1 token = 4 characters.
+        """
+        max_chars = max_tokens * 4
+        
+        # Over-fetch slightly to ensure we have enough good candidates
+        top_k_fetch = max(10, max_tokens // 50)
+        results = self.hybrid_search(namespace, query, top_k=top_k_fetch)
+        
+        if not results:
+            return "<context></context>"
+            
+        packed_content = "<context>\n"
+        current_chars = len(packed_content) + len("</context>\n")
+        added_chunks = 0
+        
+        for r in results:
+            age = self._format_age(r.timestamp)
+            relevance = self._get_relevance(r.score)
+            
+            block = f'  <memory source="{r.source}" relevance="{relevance}" age="{age}">\n{r.content}\n  </memory>\n'
+            block_len = len(block)
+            
+            if current_chars + block_len <= max_chars:
+                packed_content += block
+                current_chars += block_len
+                added_chunks += 1
+            else:
+                # We skip chunks that don't fit entirely, no hard truncations.
+                continue
+                
+        if added_chunks == 0:
+            return "<context></context>"
+                
+        packed_content += "</context>"
+        return packed_content
+
+    def add_short_term_memory(self, namespace: str, role: str, content: str) -> None:
+        """
+        Add a conversational turn to the short-term memory (sliding window).
+        """
+        if namespace not in self._short_term_memory:
+            self._short_term_memory[namespace] = []
+            
+        self._short_term_memory[namespace].append({
+            "role": role,
+            "content": content,
+            "timestamp": int(time.time())
+        })
+        
+        # Maintain sliding window
+        if len(self._short_term_memory[namespace]) > self.short_term_window_size:
+            self._short_term_memory[namespace] = self._short_term_memory[namespace][-self.short_term_window_size:]
+
+    def get_short_term_memory(self, namespace: str) -> List[Dict[str, Any]]:
+        """
+        Retrieve the short-term memory sliding window for a namespace.
+        """
+        return self._short_term_memory.get(namespace, [])
+
+    def consolidate_memory(self, namespace: str) -> Optional[str]:
+        """
+        Summarize the current short-term memory using an LLM and store it as a long-term memory.
+        Clears the short-term memory after consolidation.
+        """
+        history = self.get_short_term_memory(namespace)
+        if not history:
+            return None
+
+        # Build conversation string
+        conversation = ""
+        for msg in history:
+            role = msg["role"].upper()
+            content = msg["content"]
+            conversation += f"{role}: {content}\n\n"
+
+        prompt = f"""Please summarize the following conversation into concise, factual knowledge points that should be stored in long-term memory. Focus on user preferences, technical decisions, and important facts.
+
+Conversation:
+{conversation}
+"""
+
+        # Call LLM via litellm (supports OpenAI, Anthropic, Gemini, DeepSeek, etc. based on os.environ)
+        model = os.environ.get("LLM_MODEL", "gpt-4o-mini") # Fallback to a fast model
+        try:
+            response = litellm.completion(
+                model=model,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            summary = response.choices[0].message.content
+
+            if summary:
+                # Store the summary in long-term memory
+                import uuid
+                doc_id = str(uuid.uuid4())
+                self.insert_memory(doc_id, namespace, summary, source="consolidation")
+                
+                # Clear short-term memory
+                self._short_term_memory[namespace] = []
+                return doc_id
+        except Exception as e:
+            print(f"Error during memory consolidation: {e}")
+            return None
+            
+        return None
+
+    # =========================================================
+    # Working Memory (Scratchpad) Operations
+    # =========================================================
+    
+    def write_working_memory(self, namespace: str, key: str, value: str) -> None:
+        """Set a value in the working memory scratchpad for a namespace."""
+        current_time = int(time.time())
+        self.cursor.execute('''
+            INSERT INTO working_memory (namespace, key, value, timestamp)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(namespace, key) DO UPDATE SET
+                value=excluded.value,
+                timestamp=excluded.timestamp
+        ''', (namespace, key, value, current_time))
+        self.conn.commit()
+
+    def read_working_memory(self, namespace: str, key: str) -> Optional[str]:
+        """Read a value from the working memory scratchpad."""
+        self.cursor.execute('SELECT value FROM working_memory WHERE namespace=? AND key=?', (namespace, key))
+        row = self.cursor.fetchone()
+        if row:
+            return row[0]
+        return None
+
+    def list_working_memory(self, namespace: str) -> Dict[str, str]:
+        """Get all working memory keys and values for a namespace."""
+        self.cursor.execute('SELECT key, value FROM working_memory WHERE namespace=?', (namespace,))
+        return {row[0]: row[1] for row in self.cursor.fetchall()}
+
+    def delete_working_memory(self, namespace: str, key: str) -> None:
+        """Delete a specific key from the working memory scratchpad."""
+        self.cursor.execute('DELETE FROM working_memory WHERE namespace=? AND key=?', (namespace, key))
+        self.conn.commit()
+
+    def clear_working_memory(self, namespace: str) -> None:
+        """Clear the entire working memory scratchpad for a namespace."""
+        self.cursor.execute('DELETE FROM working_memory WHERE namespace=?', (namespace,))
+        self.conn.commit()
 
     def close(self):
         self.conn.close()

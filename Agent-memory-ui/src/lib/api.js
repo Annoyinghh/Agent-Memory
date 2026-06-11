@@ -61,12 +61,40 @@ export const api = {
    * @param {string} namespace
    * @param {string} content
    * @param {string} source
+   * @param {number} dedupThreshold
    * @returns {Promise<{id: string, namespace: string, message: string}>}
    */
-  insert: (namespace, content, source) =>
+  insert: (namespace, content, source, dedupThreshold = 0.0) =>
     request('/api/memory/insert', {
       method: 'POST',
-      body: JSON.stringify({ namespace, content, source }),
+      body: JSON.stringify({ namespace, content, source, dedup_threshold: dedupThreshold }),
+    }),
+
+  /**
+   * Update existing memory chunk by ID
+   * @param {string} docId
+   * @param {string} namespace
+   * @param {string} content
+   * @param {string} source
+   * @returns {Promise<{id: string, namespace: string, message: string}>}
+   */
+  update: (docId, namespace, content, source) =>
+    request('/api/memory/update', {
+      method: 'POST',
+      body: JSON.stringify({ doc_id: docId, namespace, content, source }),
+    }),
+
+  /**
+   * Pack best context under a token budget
+   * @param {string} namespace
+   * @param {string} query
+   * @param {number} maxTokens
+   * @returns {Promise<{query: string, namespace: string, packed_context: string}>}
+   */
+  pack: (namespace, query, maxTokens = 2000) =>
+    request('/api/memory/pack', {
+      method: 'POST',
+      body: JSON.stringify({ namespace, query, max_tokens: maxTokens }),
     }),
 
   /**

@@ -253,6 +253,7 @@ export default function DigitalAvatar() {
 
     const scene = new THREE.Scene();
     
+    let targetCameraZ = 4.2;
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
     camera.position.z = 4.2;
 
@@ -293,6 +294,27 @@ export default function DigitalAvatar() {
     let originalPositions = null;
     let headGeometry = null;
     const avatarState = { isVertexVisible: null };
+
+    // Flat arrays to cache rotated/scaled morph target offsets
+    let blinkL_dx = null, blinkL_dy = null, blinkL_dz = null;
+    let blinkR_dx = null, blinkR_dy = null, blinkR_dz = null;
+    let jawOpen_dx = null, jawOpen_dy = null, jawOpen_dz = null;
+
+    // Blinking state
+    let nextBlinkTime = 3.0 + Math.random() * 4.0;
+    let lastBlinkTime = 0;
+    const blinkDuration = 0.20;
+
+    // Glitch state
+    let nextGlitchTime = 1.0;
+    let glitchEndTime = 0;
+    let isGlitching = false;
+
+    // Additional premium visual effects states
+    let fresnelShaderMaterial = null;
+    let dustPoints = null;
+    let dustGeometry = null;
+    let dustSpeeds = [];
 
     // Load glTF model dynamically to avoid Next.js SSR build errors
     import('three/examples/jsm/loaders/GLTFLoader').then(({ GLTFLoader }) => {
@@ -393,6 +415,51 @@ export default function DigitalAvatar() {
             originalPositions[i * 3 + 2] = posAttr.getZ(i);
           }
 
+          // Cache morph targets if they exist
+          const morphPos = headGeometry.morphAttributes ? headGeometry.morphAttributes.position : null;
+          if (morphPos) {
+            const dict = headMesh.morphTargetDictionary || {};
+            const blinkLIdx = dict['eyeBlink_L'];
+            const blinkRIdx = dict['eyeBlink_R'];
+            const jawOpenIdx = dict['jawOpen'];
+
+            if (blinkLIdx !== undefined && morphPos[blinkLIdx]) {
+              const attr = morphPos[blinkLIdx];
+              blinkL_dx = new Float32Array(count);
+              blinkL_dy = new Float32Array(count);
+              blinkL_dz = new Float32Array(count);
+              for (let i = 0; i < count; i++) {
+                blinkL_dx[i] = attr.getX(i) * scale;
+                blinkL_dy[i] = -attr.getZ(i) * scale;
+                blinkL_dz[i] = attr.getY(i) * scale;
+              }
+            }
+
+            if (blinkRIdx !== undefined && morphPos[blinkRIdx]) {
+              const attr = morphPos[blinkRIdx];
+              blinkR_dx = new Float32Array(count);
+              blinkR_dy = new Float32Array(count);
+              blinkR_dz = new Float32Array(count);
+              for (let i = 0; i < count; i++) {
+                blinkR_dx[i] = attr.getX(i) * scale;
+                blinkR_dy[i] = -attr.getZ(i) * scale;
+                blinkR_dz[i] = attr.getY(i) * scale;
+              }
+            }
+
+            if (jawOpenIdx !== undefined && morphPos[jawOpenIdx]) {
+              const attr = morphPos[jawOpenIdx];
+              jawOpen_dx = new Float32Array(count);
+              jawOpen_dy = new Float32Array(count);
+              jawOpen_dz = new Float32Array(count);
+              for (let i = 0; i < count; i++) {
+                jawOpen_dx[i] = attr.getX(i) * scale;
+                jawOpen_dy[i] = -attr.getZ(i) * scale;
+                jawOpen_dz[i] = attr.getY(i) * scale;
+              }
+            }
+          }
+
           // Filter index buffer to remove any triangles using hidden vertices
           const indexAttr = headGeometry.index;
           if (indexAttr) {
@@ -464,14 +531,15 @@ export default function DigitalAvatar() {
           headGeometry.setAttribute('aVisibility', new THREE.BufferAttribute(visibilityArr, 1));
 
           // Fresnel Glow Material for the solid head backing (depth mask)
-          const fresnelMaterial = new THREE.ShaderMaterial({
+          fresnelShaderMaterial = new THREE.ShaderMaterial({
             uniforms: {
               glowColor: { value: new THREE.Color(0x00a2ff) }, // pure blue glow
               innerColor: { value: new THREE.Color(0x000511) }, // dark space blue
               power: { value: 2.2 },
               opacity: { value: 0.85 },
               bottomY: { value: bottomY },
-              fadeRange: { value: fadeRange }
+              fadeRange: { value: fadeRange },
+              uTime: { value: 0.0 }
             },
             vertexShader: `
               attribute float aVisibility;
@@ -494,6 +562,7 @@ export default function DigitalAvatar() {
               uniform float opacity;
               uniform float bottomY;
               uniform float fadeRange;
+              uniform float uTime;
               varying float vVisibility;
               varying vec3 vNormal;
               varying vec3 vPositionNormal;
@@ -506,7 +575,11 @@ export default function DigitalAvatar() {
                 vec3 norm = normalize(vNormal);
                 float intensity = pow(1.0 - max(0.0, dot(norm, viewDir)), power);
                 
-                vec3 finalColor = mix(innerColor, glowColor, intensity);
+                // Add a dynamic energy ripple along the face's Y coordinates
+                float pulse = sin(vPosition.y * 4.0 - uTime * 3.0) * 0.5 + 0.5;
+                vec3 pulseColor = mix(glowColor, vec3(0.0, 1.0, 0.85), pulse * 0.3);
+                
+                vec3 finalColor = mix(innerColor, pulseColor, intensity);
                 
                 float alpha = mix(opacity * 0.45, opacity, intensity);
                 if (vPosition.y < bottomY + fadeRange) {
@@ -526,24 +599,33 @@ export default function DigitalAvatar() {
             polygonOffsetUnits: 1.0
           });
 
-          headSolid = new THREE.Mesh(headGeometry, fresnelMaterial);
+          headSolid = new THREE.Mesh(headGeometry, fresnelShaderMaterial);
           scene.add(headSolid);
 
           // Points (Point Cloud) using Custom Shader Material to discard mouth interior
           pointsShaderMaterial = new THREE.ShaderMaterial({
             uniforms: {
               uSize: { value: 0.024 },
-              uTexture: { value: texture }
+              uTexture: { value: texture },
+              uTime: { value: 0.0 }
             },
             vertexShader: `
               uniform float uSize;
+              uniform float uTime;
               attribute float aVisibility;
               attribute vec3 aColor;
               varying float vVisibility;
               varying vec3 vColor;
+              varying vec3 vPosition;
               void main() {
                 vVisibility = aVisibility;
-                vColor = aColor;
+                vPosition = position;
+                
+                // Add a dynamic wave color highlight flowing up the face in vertex shader
+                float wave = sin(position.y * 2.5 - uTime * 1.8) * 0.5 + 0.5;
+                // Bright cyan energy wave sweep
+                vColor = mix(aColor, vec3(0.1, 0.95, 1.0), wave * 0.28);
+                
                 vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
                 gl_PointSize = uSize * (300.0 / -mvPosition.z);
                 gl_Position = projectionMatrix * mvPosition;
@@ -551,15 +633,22 @@ export default function DigitalAvatar() {
             `,
             fragmentShader: `
               uniform sampler2D uTexture;
+              uniform float uTime;
               varying float vVisibility;
               varying vec3 vColor;
+              varying vec3 vPosition;
               void main() {
                 if (vVisibility < 0.5) {
                   discard;
                 }
                 vec4 texColor = texture2D(uTexture, gl_PointCoord);
                 if (texColor.a < 0.1) discard;
-                gl_FragColor = vec4(vColor * texColor.rgb, 0.92);
+                
+                // Add high-frequency digital shimmer based on screen coordinates and time
+                float shimmer = sin(gl_FragCoord.x * 0.15 + gl_FragCoord.y * 0.23 + uTime * 6.0) * 0.5 + 0.5;
+                vec3 finalColor = vColor * (0.82 + shimmer * 0.18);
+                
+                gl_FragColor = vec4(finalColor * texColor.rgb, 0.95);
               }
             `,
             transparent: true,
@@ -599,9 +688,61 @@ export default function DigitalAvatar() {
             depthTest: true,
             blending: THREE.AdditiveBlending
           });
-          headWireframe = new THREE.Mesh(headGeometry, lineShaderMaterial);
-          scene.add(headWireframe);
+          // headWireframe = new THREE.Mesh(headGeometry, lineShaderMaterial);
+          // scene.add(headWireframe);
 
+          // Create ambient data dust (floating digital memory particles)
+          const dustCount = 120;
+          dustGeometry = new THREE.BufferGeometry();
+          const dustPositions = new Float32Array(dustCount * 3);
+          dustSpeeds = [];
+          
+          for (let i = 0; i < dustCount; i++) {
+            // Distribute in a cylinder surrounding the head
+            const angle = Math.random() * Math.PI * 2;
+            const radius = 0.55 + Math.random() * 1.6;
+            const x = Math.cos(angle) * radius;
+            const y = (Math.random() - 0.5) * 3.6;
+            const z = Math.sin(angle) * radius + (Math.random() - 0.5) * 0.6;
+            
+            dustPositions[i * 3] = x;
+            dustPositions[i * 3 + 1] = y;
+            dustPositions[i * 3 + 2] = z;
+            
+            dustSpeeds.push({
+              speedY: 0.10 + Math.random() * 0.16,
+              amplitude: 0.03 + Math.random() * 0.07,
+              freq: 0.7 + Math.random() * 1.3,
+              phase: Math.random() * Math.PI * 2
+            });
+          }
+          
+          dustGeometry.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3));
+          
+          const dustTextureCanvas = document.createElement('canvas');
+          dustTextureCanvas.width = 16;
+          dustTextureCanvas.height = 16;
+          const dtCtx = dustTextureCanvas.getContext('2d');
+          const dtGrad = dtCtx.createRadialGradient(8, 8, 0, 8, 8, 8);
+          dtGrad.addColorStop(0, 'rgba(0, 242, 254, 1)'); 
+          dtGrad.addColorStop(0.35, 'rgba(0, 119, 255, 0.7)'); 
+          dtGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+          dtCtx.fillStyle = dtGrad;
+          dtCtx.fillRect(0, 0, 16, 16);
+          const dustTexture = new THREE.CanvasTexture(dustTextureCanvas);
+          
+          const dustMaterial = new THREE.PointsMaterial({
+            size: 0.05,
+            map: dustTexture,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            opacity: 0.8
+          });
+          
+          dustPoints = new THREE.Points(dustGeometry, dustMaterial);
+          scene.add(dustPoints);
+ 
           // Start loop
           animate();
           setIsModelLoaded(true);
@@ -615,9 +756,35 @@ export default function DigitalAvatar() {
       
       const time = clock.getElapsedTime();
       const isSpeakingVal = isSpeakingRef.current;
+
+      // Smoothly lerp camera position Z based on container width
+      camera.position.z += (targetCameraZ - camera.position.z) * 0.05;
       
       if (isSpeakingVal && Math.random() < 0.01) {
         console.log("[DigitalAvatar] animate - mouth animating, talkCycle:", Math.sin(time * 14));
+      }
+
+      // Natural eye blinking: random intervals (minimum 3.0s, max 8.0s)
+      let blinkFactor = 0.0;
+      const timeSinceLastBlink = time - lastBlinkTime;
+      if (timeSinceLastBlink > nextBlinkTime) {
+        lastBlinkTime = time;
+        nextBlinkTime = 3.0 + Math.random() * 5.0; // next blink in 3 to 8 seconds (typical human frequency minimum 3s)
+      }
+      if (timeSinceLastBlink < blinkDuration) {
+        blinkFactor = Math.sin((timeSinceLastBlink / blinkDuration) * Math.PI);
+      }
+
+      // Holographic current glitch state update
+      if (time > nextGlitchTime) {
+        if (Math.random() < 0.40) { // 40% chance to glitch when timer fires
+          isGlitching = true;
+          glitchEndTime = time + 0.08 + Math.random() * 0.12; // lasts 80ms to 200ms
+        }
+        nextGlitchTime = time + 1.5 + Math.random() * 2.5; // check again in 1.5 to 4 seconds
+      }
+      if (isGlitching && time > glitchEndTime) {
+        isGlitching = false;
       }
 
       // Idle floating breath translations and rotations
@@ -625,26 +792,51 @@ export default function DigitalAvatar() {
       const floatTiltX = Math.sin(time * 0.6) * 0.02;
       const floatTiltZ = Math.cos(time * 0.8) * 0.02;
 
-      // Interact with mouse (smooth look-at)
-      const targetRotX = -mouse.y * 0.35 + floatTiltX;
-      const targetRotY = mouse.x * 0.45;
+      // Interact with mouse occasionally (natural glance breathing)
+      // Oscillate glance interest between 0.0 (focused forward) and 1.0 (looking at mouse)
+      const glanceWeight = Math.max(0.0, Math.sin(time * 0.3) * 0.8 + 0.2); 
+      const targetRotX = -mouse.y * 0.25 * glanceWeight + floatTiltX;
+      const targetRotY = mouse.x * 0.30 * glanceWeight;
       const targetRotZ = floatTiltZ;
 
-      const lerpSpeed = 0.08;
+      const lerpSpeed = 0.035; // slower, natural, weighted look-at rotation
 
-      if (headPoints && headWireframe && headGeometry) {
+      if (headPoints && headGeometry) {
         headPoints.position.y = floatOffsetY;
-        headWireframe.position.y = floatOffsetY;
+        if (headWireframe) headWireframe.position.y = floatOffsetY;
         if (headSolid) headSolid.position.y = floatOffsetY;
 
         headPoints.rotation.x += (targetRotX - headPoints.rotation.x) * lerpSpeed;
         headPoints.rotation.y += (targetRotY - headPoints.rotation.y) * lerpSpeed;
         headPoints.rotation.z += (targetRotZ - headPoints.rotation.z) * lerpSpeed;
 
-        headWireframe.rotation.copy(headPoints.rotation);
+        if (headWireframe) headWireframe.rotation.copy(headPoints.rotation);
         if (headSolid) headSolid.rotation.copy(headPoints.rotation);
+      }
 
-        // Voice ripple effect on positions
+      if (pointsShaderMaterial) {
+        pointsShaderMaterial.uniforms.uTime.value = time;
+        if (isSpeakingVal) {
+          pointsShaderMaterial.uniforms.uSize.value = 0.032 + Math.sin(time * 20) * 0.003;
+        } else {
+          pointsShaderMaterial.uniforms.uSize.value = 0.024 + Math.sin(time * 1.5) * 0.0015;
+        }
+ 
+        // Apply glitch size flicker (flicker point size to look like power signal fluctuations)
+        if (isGlitching) {
+          pointsShaderMaterial.uniforms.uSize.value *= (0.6 + Math.random() * 0.6);
+        }
+      }
+ 
+      if (fresnelShaderMaterial) {
+        fresnelShaderMaterial.uniforms.uTime.value = time;
+        // Slowly pulse backing opacity and power to create a heartbeat glow
+        fresnelShaderMaterial.uniforms.power.value = 2.2 + Math.sin(time * 2.0) * 0.3;
+        fresnelShaderMaterial.uniforms.opacity.value = 0.82 + Math.sin(time * 3.5) * 0.08;
+      }
+
+      if (headPoints && headGeometry) {
+        // Voice ripple effect and morph target animations on positions
         const posAttr = headGeometry.attributes.position;
         const count = posAttr.count;
 
@@ -658,68 +850,123 @@ export default function DigitalAvatar() {
           const baseY = originalPositions[i * 3 + 1];
           const baseZ = originalPositions[i * 3 + 2];
           
+          let offsetX = 0;
           let offsetY = 0;
           let offsetZ = Math.sin(time * 4 + baseY * 3) * 0.006;
 
-          if (isSpeakingVal) {
-            // Lip sync: open and close mouth
-            // Using multiple frequencies (clamped to >= 0 to prevent geometry crossing)
-            const talkCycle = Math.max(0.0, Math.sin(time * 14) * 0.35 + Math.sin(time * 23) * 0.25 + Math.sin(time * 9) * 0.15 + 0.25);
+          // Eye Blink procedurally (using smooth ellipse falloff to animate the entire eyelid and eye corners)
+          if (blinkFactor > 0.0) {
+            const eyeCenterY = 0.06;
+            const isLeftEye = (baseZ > 0.65 && baseX >= 0.12 && baseX <= 0.64 && baseY >= -0.06 && baseY <= 0.18);
+            const isRightEye = (baseZ > 0.65 && baseX <= -0.12 && baseX >= -0.64 && baseY >= -0.06 && baseY <= 0.18);
             
-            const distFromCenter = Math.abs(baseX);
-            // Mouth region for facecap model (now correctly oriented): center strip, front-facing
-            if (distFromCenter < 0.25 && baseZ > 0.8) {
-              const xFactor = Math.cos((distFromCenter / 0.25) * Math.PI * 0.5);
+            if (isLeftEye || isRightEye) {
+              const eyeCenterX = baseX > 0 ? 0.38 : -0.38;
+              const dx = (Math.abs(baseX) - 0.38) / 0.26; // normalized X (slightly larger radius for more corner movement)
+              const dy = (baseY - eyeCenterY) / 0.12;     // normalized Y
+              const distSq = dx * dx + dy * dy;
               
-              // Lower lip/chin: Y from -0.78 to -0.62 (pull down when speaking)
-              if (baseY >= -0.78 && baseY < -0.62) {
-                const jawFactor = 1.0 - ((baseY - (-0.78)) / 0.16);
-                offsetY = -0.15 * talkCycle * xFactor * (0.3 + 0.7 * jawFactor);
-                offsetZ += 0.03 * talkCycle * xFactor;
-              }
-              // Upper lip: Y from -0.62 to -0.54 (pull up slightly when speaking)
-              else if (baseY >= -0.62 && baseY < -0.54) {
-                const lipFactor = ((-0.54) - baseY) / 0.08;
-                offsetY = 0.03 * talkCycle * xFactor * lipFactor;
+              if (distSq < 1.0) {
+                const weight = Math.cos(Math.sqrt(distSq) * Math.PI * 0.5);
+                const distToCenter = baseY - eyeCenterY;
+                offsetY = -distToCenter * blinkFactor * weight;
               }
             }
+          }
 
-            if (pointsShaderMaterial) {
-              pointsShaderMaterial.uniforms.uSize.value = 0.032 + Math.sin(time * 20) * 0.003;
+          // speaking mouth animation using jawOpen morph target
+          if (isSpeakingVal) {
+            const talkCycle = Math.max(0.0, Math.sin(time * 14) * 0.35 + Math.sin(time * 23) * 0.25 + Math.sin(time * 9) * 0.15 + 0.25);
+            // Gaping amplitude coefficient for speech (0.5 keeps the mouth movement natural and subtle)
+            const speakingAmplitude = 0.5;
+            if (jawOpen_dx) {
+              offsetX += jawOpen_dx[i] * talkCycle * speakingAmplitude;
+              offsetY += jawOpen_dy[i] * talkCycle * speakingAmplitude;
+              offsetZ += jawOpen_dz[i] * talkCycle * speakingAmplitude;
+            }
+          }
+
+          // Electric current glitch / jitter effect (点阵电流抖动特效)
+          let jitterX = 0;
+          let jitterZ = 0;
+          if (isGlitching) {
+            // Horizontal slice glitch displacement
+            const glitchBandCenter = Math.sin(time * 60) * 0.8;
+            const distToBand = Math.abs(baseY - glitchBandCenter);
+            if (distToBand < 0.18) {
+              jitterX = (Math.random() - 0.5) * 0.06;
+              jitterZ = (Math.random() - 0.5) * 0.06;
+            } else {
+              // General noise during a glitch
+              jitterX = (Math.random() - 0.5) * 0.01;
+              jitterZ = (Math.random() - 0.5) * 0.01;
             }
           } else {
-            if (pointsShaderMaterial) {
-              pointsShaderMaterial.uniforms.uSize.value = 0.024 + Math.sin(time * 1.5) * 0.0015;
+            // Constant subtle micro-jitter (hologram idle hum) on random points
+            if (Math.random() < 0.12) {
+              jitterX = (Math.random() - 0.5) * 0.0025;
+              jitterZ = (Math.random() - 0.5) * 0.0025;
             }
           }
 
-          posAttr.setX(i, baseX);
+          offsetX += jitterX;
+          offsetZ += jitterZ;
+
+          posAttr.setX(i, baseX + offsetX);
           posAttr.setY(i, baseY + offsetY);
           posAttr.setZ(i, baseZ + offsetZ);
-
-          if (i === 1601 && isSpeakingVal && Math.random() < 0.05) {
-            console.log("[DigitalAvatar] Debug Vertex 1601 - baseX:", baseX.toFixed(4), "baseY:", baseY.toFixed(4), "baseZ:", baseZ.toFixed(4));
-          }
         }
         posAttr.needsUpdate = true;
+      }
+
+      // Animate ambient data dust particles (rising quantum memory dust)
+      if (dustPoints && dustGeometry) {
+        const positions = dustGeometry.attributes.position.array;
+        const dustCount = positions.length / 3;
+        for (let i = 0; i < dustCount; i++) {
+          const speed = dustSpeeds[i];
+          positions[i * 3 + 1] += speed.speedY * 0.016; // float up
+          positions[i * 3] += Math.sin(time * speed.freq + speed.phase) * speed.amplitude * 0.01; // swirl
+          
+          // Reset particle if it floats past the top boundary
+          if (positions[i * 3 + 1] > 2.0) {
+            positions[i * 3 + 1] = -1.8;
+            positions[i * 3] = (Math.random() - 0.5) * 3.2;
+            positions[i * 3 + 2] = (Math.random() - 0.5) * 2.0;
+          }
+        }
+        dustGeometry.attributes.position.needsUpdate = true;
       }
       
       renderer.render(scene, camera);
     };
 
-    const handleResize = () => {
-      if (!containerRef.current) return;
-      const w = containerRef.current.clientWidth;
-      const h = containerRef.current.clientHeight;
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
-    };
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (let entry of entries) {
+        // Use clientWidth/Height of container for exact rendering bounds
+        if (!containerRef.current) continue;
+        const w = containerRef.current.clientWidth;
+        const h = containerRef.current.clientHeight;
+        if (w === 0 || h === 0) continue;
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
 
-    window.addEventListener('resize', handleResize);
+        // Zoom out when avatar shrinks to narrow column in Search/Ingest tabs
+        if (w < 450) {
+          targetCameraZ = 6.2;
+        } else {
+          targetCameraZ = 4.2;
+        }
+      }
+    });
+
+    if (containerRef.current) {
+      resizeObserver.observe(containerRef.current);
+    }
 
     return () => {
-      window.removeEventListener('resize', handleResize);
+      resizeObserver.disconnect();
       window.removeEventListener('mousemove', handleMouseMove);
       cancelAnimationFrame(animId);
       if (containerRef.current && renderer.domElement) {

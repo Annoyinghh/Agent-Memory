@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import List, Dict, Any, Optional
 from memory_engine import MemoryEngine
 
 engine: MemoryEngine = None
@@ -46,8 +47,20 @@ class InsertRequest(BaseModel):
     namespace: str
     content: str
     source: str
+    dedup_threshold: float = 0.0
 
 class InsertResponse(BaseModel):
+    id: str
+    namespace: str
+    message: str
+
+class UpdateRequest(BaseModel):
+    doc_id: str
+    namespace: str
+    content: str
+    source: str
+
+class UpdateResponse(BaseModel):
     id: str
     namespace: str
     message: str
@@ -70,6 +83,16 @@ class SearchResponse(BaseModel):
     namespace: str
     total: int
     results: list[MemoryItemResponse]
+
+class PackRequest(BaseModel):
+    namespace: str
+    query: str
+    max_tokens: int = 2000
+
+class PackResponse(BaseModel):
+    query: str
+    namespace: str
+    packed_context: str
 
 class SnapshotRequest(BaseModel):
     namespace: str
@@ -96,15 +119,62 @@ class StatsResponse(BaseModel):
     total_chunks: int
     namespaces: dict[str, int]
 
+class ShortTermMemoryRequest(BaseModel):
+    namespace: str
+    role: str
+    content: str
+
+class ShortTermMemoryResponse(BaseModel):
+    namespace: str
+    message: str
+
+class GetShortTermMemoryResponse(BaseModel):
+    namespace: str
+    history: List[Dict[str, Any]]
+
+class WorkingMemoryWriteRequest(BaseModel):
+    namespace: str
+    key: str
+    value: str
+
+class WorkingMemoryReadResponse(BaseModel):
+    namespace: str
+    key: str
+    value: str
+
+class WorkingMemoryListResponse(BaseModel):
+    namespace: str
+    state: Dict[str, str]
+
+class StatusMessageResponse(BaseModel):
+    message: str
+
+class ConsolidateRequest(BaseModel):
+    namespace: str
+
+class ConsolidateResponse(BaseModel):
+    namespace: str
+    id: Optional[str]
+    message: str
 
 # ── Endpoints ──────────────────────────────────────────────────
 
 @app.post("/api/memory/insert", response_model=InsertResponse)
 def insert_memory(req: InsertRequest):
-    """插入一条记忆"""
+    """插入一条记忆（支持语义去重）"""
     doc_id = str(uuid.uuid4())
-    engine.insert_memory(doc_id, req.namespace, req.content, req.source)
-    return InsertResponse(id=doc_id, namespace=req.namespace, message="ok")
+    final_id = engine.insert_memory(doc_id, req.namespace, req.content, req.source, dedup_threshold=req.dedup_threshold)
+    msg = "ok" if final_id == doc_id else "merged"
+    return InsertResponse(id=final_id, namespace=req.namespace, message=msg)
+
+
+@app.post("/api/memory/update", response_model=UpdateResponse)
+def update_memory(req: UpdateRequest):
+    """按 doc_id 更新一条记忆"""
+    success = engine.update_memory(req.doc_id, req.namespace, req.content, req.source)
+    if not success:
+        raise HTTPException(status_code=404, detail="Memory not found or update failed")
+    return UpdateResponse(id=req.doc_id, namespace=req.namespace, message="updated")
 
 
 @app.post("/api/memory/search", response_model=SearchResponse)
@@ -118,6 +188,70 @@ def search_memory(req: SearchRequest):
         ) for r in results
     ]
     return SearchResponse(query=req.query, namespace=req.namespace, total=len(items), results=items)
+
+
+@app.post("/api/memory/pack", response_model=PackResponse)
+def pack_context(req: PackRequest):
+    """在 token 预算内组装最优上下文"""
+    packed = engine.pack_context(req.namespace, req.query, req.max_tokens)
+    return PackResponse(query=req.query, namespace=req.namespace, packed_context=packed)
+
+
+@app.post("/api/memory/short_term", response_model=ShortTermMemoryResponse)
+def add_short_term_memory(req: ShortTermMemoryRequest):
+    """添加一轮短期对话记忆（滑动窗口）"""
+    engine.add_short_term_memory(req.namespace, req.role, req.content)
+    return ShortTermMemoryResponse(namespace=req.namespace, message="added")
+
+@app.get("/api/memory/short_term", response_model=GetShortTermMemoryResponse)
+def get_short_term_memory(namespace: str = Query(...)):
+    """获取指定 namespace 的所有短期记忆"""
+    history = engine.get_short_term_memory(namespace)
+    return GetShortTermMemoryResponse(namespace=namespace, history=history)
+
+
+# ── Working Memory (Scratchpad) Endpoints ──
+
+@app.post("/api/memory/working", response_model=StatusMessageResponse)
+def write_working_memory(req: WorkingMemoryWriteRequest):
+    """写入一条工作记忆"""
+    engine.write_working_memory(req.namespace, req.key, req.value)
+    return StatusMessageResponse(message="written")
+
+@app.get("/api/memory/working", response_model=WorkingMemoryReadResponse)
+def read_working_memory(namespace: str = Query(...), key: str = Query(...)):
+    """读取指定工作记忆"""
+    val = engine.read_working_memory(namespace, key)
+    if val is None:
+        raise HTTPException(status_code=404, detail="Key not found in working memory")
+    return WorkingMemoryReadResponse(namespace=namespace, key=key, value=val)
+
+@app.get("/api/memory/working/list", response_model=WorkingMemoryListResponse)
+def list_working_memory(namespace: str = Query(...)):
+    """列出某个 namespace 下的所有工作记忆"""
+    state = engine.list_working_memory(namespace)
+    return WorkingMemoryListResponse(namespace=namespace, state=state)
+
+@app.delete("/api/memory/working", response_model=StatusMessageResponse)
+def delete_working_memory(namespace: str = Query(...), key: str = Query(...)):
+    """删除指定的任务记忆"""
+    engine.delete_working_memory(namespace, key)
+    return StatusMessageResponse(message="deleted")
+
+@app.delete("/api/memory/working/clear", response_model=StatusMessageResponse)
+def clear_working_memory(namespace: str = Query(...)):
+    """清空整个 namespace 的工作记忆"""
+    engine.clear_working_memory(namespace)
+    return StatusMessageResponse(message="cleared")
+
+@app.post("/api/memory/consolidate", response_model=ConsolidateResponse)
+def consolidate_memory(req: ConsolidateRequest):
+    """将短期记忆整合并提炼入长期数据库中"""
+    doc_id = engine.consolidate_memory(req.namespace)
+    if doc_id:
+        return ConsolidateResponse(namespace=req.namespace, id=doc_id, message="consolidated")
+    else:
+        return ConsolidateResponse(namespace=req.namespace, id=None, message="no history to consolidate or failed")
 
 
 @app.post("/api/memory/snapshot", response_model=SnapshotResponse)

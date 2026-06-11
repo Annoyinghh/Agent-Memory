@@ -23,9 +23,39 @@ export default function Sidebar() {
   }, []);
 
   const navItems = [
-    { label: '数据中心 // DASHBOARD', value: 'dashboard' },
-    { label: '知识检索 // SEARCH', value: 'search' },
-    { label: '数据注入 // INGEST', value: 'ingest' }
+    { 
+      label: '数据中心 // DASHBOARD', 
+      value: 'dashboard',
+      icon: (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="3" y="3" width="7" height="9" />
+          <rect x="14" y="3" width="7" height="5" />
+          <rect x="14" y="12" width="7" height="9" />
+          <rect x="3" y="16" width="7" height="5" />
+        </svg>
+      )
+    },
+    { 
+      label: '知识检索 // SEARCH', 
+      value: 'search',
+      icon: (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+      )
+    },
+    { 
+      label: '数据注入 // INGEST', 
+      value: 'ingest',
+      icon: (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="17 8 12 3 7 8" />
+          <line x1="12" y1="3" x2="12" y2="15" />
+        </svg>
+      )
+    }
   ];
 
   return (
@@ -61,15 +91,17 @@ export default function Sidebar() {
                 background: 'transparent',
                 border: 'none',
                 cursor: 'pointer',
-                textAlign: 'left',
                 width: '100%',
                 outline: 'none',
                 textDecoration: 'none'
               }}
             >
-              <span className="bracket-left">[</span>
-              <span className="link-text">{item.label}</span>
-              <span className="bracket-right">]</span>
+              <span className="nav-icon-wrapper">{item.icon}</span>
+              <span className="nav-label-wrapper">
+                <span className="bracket-left">[</span>
+                <span className="link-text">{item.label}</span>
+                <span className="bracket-right">]</span>
+              </span>
               {isActive && <span className="active-dot"></span>}
             </button>
           );
@@ -146,15 +178,15 @@ export default function Sidebar() {
           left: 0;
           top: 0;
           height: 100vh;
-          width: 14px;
-          background: rgba(3, 2, 1, 0.96);
+          width: 68px;
+          background: rgba(3, 2, 1, 0.97);
           border-right: 1px solid rgba(255, 187, 0, 0.12);
           box-shadow: 10px 0 30px rgba(0, 0, 0, 0.95);
           display: flex;
           flex-direction: column;
           z-index: 200;
           overflow: hidden;
-          opacity: 0.15;
+          opacity: 0.75;
           transition: width 0.35s cubic-bezier(0.25, 1, 0.5, 1), 
                       opacity 0.3s ease;
         }
@@ -179,17 +211,20 @@ export default function Sidebar() {
         }
 
         .sidebar-header {
-          padding: 24px;
+          height: var(--header-height);
+          padding: 0;
           display: flex;
           align-items: center;
-          gap: 14px;
           border-bottom: 1px solid rgba(255, 187, 0, 0.08);
           position: relative;
+          width: 100%;
         }
 
         .cyber-logo-hex {
-          width: 42px;
-          height: 42px;
+          width: 32px;
+          height: 32px;
+          margin-left: 18px;
+          flex-shrink: 0;
         }
 
         .hex-svg {
@@ -210,6 +245,17 @@ export default function Sidebar() {
         .logo-meta {
           display: flex;
           flex-direction: column;
+          gap: 2px;
+          opacity: 0;
+          visibility: hidden;
+          transition: opacity 0.25s ease, visibility 0.25s ease;
+          white-space: nowrap;
+          margin-left: 14px;
+        }
+
+        .cyber-sidebar:hover .logo-meta {
+          opacity: 1;
+          visibility: visible;
         }
 
         .main-logo-text {
@@ -229,24 +275,59 @@ export default function Sidebar() {
         }
 
         .cyber-nav {
-          padding: 30px 16px;
+          padding: 30px 0;
           display: flex;
           flex-direction: column;
           gap: 12px;
           flex: 1;
+          width: 100%;
         }
 
         .cyber-nav-link {
           display: flex;
           align-items: center;
-          padding: 10px 12px;
+          justify-content: flex-start;
+          width: 100%;
           text-decoration: none;
           color: hsl(var(--text-muted));
           transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
           font-size: 13px;
           font-family: var(--font-mono);
           position: relative;
+          height: 48px;
+          padding: 0;
+        }
+
+        .nav-icon-wrapper {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 68px;
+          height: 48px;
+          flex-shrink: 0;
+          color: hsl(var(--text-muted));
+          transition: color 0.25s ease;
+        }
+
+        .cyber-nav-link:hover .nav-icon-wrapper,
+        .cyber-nav-link.active .nav-icon-wrapper {
+          color: hsl(var(--color-cyan));
+          filter: drop-shadow(0 0 5px hsl(var(--color-cyan)));
+        }
+
+        .nav-label-wrapper {
+          display: flex;
+          align-items: center;
           gap: 6px;
+          opacity: 0;
+          visibility: hidden;
+          transition: opacity 0.25s ease, visibility 0.25s ease;
+          white-space: nowrap;
+        }
+
+        .cyber-sidebar:hover .nav-label-wrapper {
+          opacity: 1;
+          visibility: visible;
         }
 
         .bracket-left, .bracket-right {
@@ -308,6 +389,16 @@ export default function Sidebar() {
 
         .sidebar-diagnostic {
           padding: 20px;
+          opacity: 0;
+          visibility: hidden;
+          transition: opacity 0.25s ease, visibility 0.25s ease;
+          width: 280px;
+          flex-shrink: 0;
+        }
+
+        .cyber-sidebar:hover .sidebar-diagnostic {
+          opacity: 1;
+          visibility: visible;
         }
 
         .diag-panel {

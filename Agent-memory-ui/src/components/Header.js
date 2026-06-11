@@ -5,16 +5,15 @@ import { usePathname } from 'next/navigation';
 import { useApp } from '@/context/AppContext';
 
 export default function Header() {
-  const pathname = usePathname();
-  const { activeNamespace, setActiveNamespace, namespaces } = useApp();
+  const { activeNamespace, setActiveNamespace, namespaces, activeTab } = useApp();
 
   const getPageTitle = () => {
-    switch (pathname) {
-      case '/':
+    switch (activeTab) {
+      case 'dashboard':
         return '数据中心看板 (Database Overview)';
-      case '/search':
+      case 'search':
         return '知识检索控制台 (Hybrid Search)';
-      case '/ingest':
+      case 'ingest':
         return '知识注入与快照 (Knowledge Ingestion)';
       default:
         return '控制台 (Dashboard)';
@@ -50,7 +49,7 @@ export default function Header() {
         .header-container {
           position: fixed;
           top: 0;
-          left: 0;
+          left: 68px;
           right: 0;
           height: var(--header-height);
           background: rgba(5, 4, 3, 0.35);
