@@ -126,6 +126,38 @@ def consolidate_memory(namespace: str) -> str:
     else:
         return f"Failed to consolidate memory or no short-term memory exists for namespace '{namespace}'."
 
+@mcp.tool()
+def pin_memory(doc_id: str, is_pinned: bool) -> str:
+    """
+    Pin or unpin a specific memory to boost its relevance score.
+    Args:
+        doc_id: The ID of the memory.
+        is_pinned: True to pin, False to unpin.
+    """
+    engine.set_pinned(doc_id, is_pinned)
+    return f"Successfully set pinned status of memory '{doc_id}' to {is_pinned}"
+
+@mcp.tool()
+def record_memory_access(doc_id: str) -> str:
+    """
+    Record an access to a specific memory to slightly boost its future relevance score.
+    Args:
+        doc_id: The ID of the memory accessed.
+    """
+    engine.record_access(doc_id)
+    return f"Successfully recorded access for memory '{doc_id}'"
+
+@mcp.tool()
+def active_forgetting(namespace: str, max_capacity: int = 10000) -> str:
+    """
+    Enforce a capacity limit by forgetting (deleting) the lowest scoring, unpinned memories.
+    Args:
+        namespace: The project namespace.
+        max_capacity: The maximum number of memories to keep in this namespace.
+    """
+    deleted = engine.active_forgetting(namespace, max_capacity)
+    return f"Active forgetting triggered. Deleted {deleted} memories from namespace '{namespace}' to maintain capacity of {max_capacity}."
+
 
 # ============================================================
 # Working Memory (Scratchpad) Tools

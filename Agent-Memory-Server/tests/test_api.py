@@ -185,3 +185,25 @@ def test_api_consolidate_memory(mock_consolidate, client):
     assert resp.status_code == 200
     assert resp.json()["id"] == "mock_doc_id"
     mock_consolidate.assert_called_once_with(namespace)
+
+def test_api_importance_scoring(client):
+    namespace = "api_importance_ns"
+    insert_resp = client.post("/api/memory/insert", json={"namespace": namespace, "content": "Important test memory", "source": "test"})
+    doc_id = insert_resp.json()["id"]
+    
+    # Test pin
+    pin_resp = client.post("/api/memory/pin", json={"doc_id": doc_id, "is_pinned": True})
+    assert pin_resp.status_code == 200
+    
+    # Test record access
+    access_resp = client.post("/api/memory/access", json={"doc_id": doc_id})
+    assert access_resp.status_code == 200
+\
+def test_api_active_forgetting(client):
+    namespace = 'api_forget_ns'
+    for i in range(5):
+        client.post('/api/memory/insert', json={'namespace': namespace, 'content': f'content {i}', 'source': 'test'})
+    resp = client.post('/api/memory/forget', json={'namespace': namespace, 'max_capacity': 3})
+    assert resp.status_code == 200
+    assert resp.json()['deleted_count'] == 2
+\

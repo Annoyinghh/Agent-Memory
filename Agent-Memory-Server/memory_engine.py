@@ -51,6 +51,23 @@ class MemoryEngine:
                 PRIMARY KEY (namespace, key)
             )
         ''')
+        # Create Memory Stats table for Importance Scoring
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS memory_stats (
+                id TEXT PRIMARY KEY,
+                access_count INTEGER DEFAULT 0,
+                is_pinned INTEGER DEFAULT 0
+            )
+        ''')
+        # Create Sessions table for Session Management
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS memory_sessions (
+                id TEXT PRIMARY KEY,
+                namespace TEXT,
+                created_at INTEGER,
+                last_active INTEGER
+            )
+        ''')
         self.conn.commit()
 
     def insert_memory(self, doc_id: str, namespace: str, content: str, source: str, dedup_threshold: float = 0.0) -> str:
@@ -84,6 +101,10 @@ class MemoryEngine:
             "INSERT INTO memory_fts (id, namespace, content, source, timestamp) VALUES (?, ?, ?, ?, ?)",
             (doc_id, namespace, content, source, current_time)
         )
+        self.cursor.execute(
+            "INSERT OR IGNORE INTO memory_stats (id, access_count, is_pinned) VALUES (?, 0, 0)",
+            (doc_id,)
+        )
         self.conn.commit()
 
         # 2. Insert into ChromaDB
@@ -98,7 +119,9 @@ class MemoryEngine:
     def freeze_snapshot(self, namespace: str, summary: str, doc_id: str) -> str:
         """A snapshot is a special high-priority memory."""
         # Source explicitly marked as 'snapshot'
-        return self.insert_memory(doc_id, namespace, summary, source="snapshot")
+        inserted_id = self.insert_memory(doc_id, namespace, summary, source="snapshot")
+        self.set_pinned(inserted_id, True)
+        return inserted_id
 
     def update_memory(self, doc_id: str, namespace: str, content: str, source: str) -> bool:
         """Update an existing memory chunk in both SQLite and ChromaDB."""
@@ -120,6 +143,34 @@ class MemoryEngine:
         )
         
         return True
+
+    # =========================================================
+    # Importance Scoring Operations
+    # =========================================================
+
+    def record_access(self, doc_id: str) -> None:
+        """Increment the access count for a specific memory."""
+        self.cursor.execute(
+            "UPDATE memory_stats SET access_count = access_count + 1 WHERE id = ?", 
+            (doc_id,)
+        )
+        self.conn.commit()
+        
+    def set_pinned(self, doc_id: str, is_pinned: bool) -> None:
+        """Pin or unpin a specific memory."""
+        pinned_val = 1 if is_pinned else 0
+        self.cursor.execute(
+            "UPDATE memory_stats SET is_pinned = ? WHERE id = ?", 
+            (pinned_val, doc_id)
+        )
+        self.conn.commit()
+        
+    def _get_stats(self, doc_id: str) -> dict:
+        self.cursor.execute("SELECT access_count, is_pinned FROM memory_stats WHERE id = ?", (doc_id,))
+        row = self.cursor.fetchone()
+        if row:
+            return {"access_count": row[0], "is_pinned": bool(row[1])}
+        return {"access_count": 0, "is_pinned": False}
 
     def hybrid_search(self, namespace: str, query: str, top_k: int = 5) -> List[MemoryItem]:
         """Perform Hybrid Search: Keyword (FTS5) + Semantic (Chroma)."""
@@ -183,13 +234,23 @@ class MemoryEngine:
                         score=semantic_score
                     )
 
-        # 3. Apply Time Decay & Snapshot Boost
+        # 3. Apply Time Decay, Snapshot Boost, & Importance Scoring
         current_time = int(time.time())
         final_list = list(results.values())
         for item in final_list:
+            stats = self._get_stats(item.id)
+            
             # Snapshots get a massive boost
             if item.source == "snapshot":
                 item.score *= 1.5
+                
+            # Access count boost: log(1 + access_count) to smooth out extreme values
+            import math
+            item.score *= (1.0 + 0.1 * math.log1p(stats["access_count"]))
+            
+            # Pinned boost
+            if stats["is_pinned"]:
+                item.score *= 2.0
                 
             # Time decay: reduce score slightly for older items
             # e.g., half-life of 30 days (2592000 seconds)
@@ -243,6 +304,8 @@ class MemoryEngine:
                 packed_content += block
                 current_chars += block_len
                 added_chunks += 1
+                # Record access for Importance Scoring
+                self.record_access(r.id)
             else:
                 # We skip chunks that don't fit entirely, no hard truncations.
                 continue
@@ -275,6 +338,20 @@ class MemoryEngine:
         Retrieve the short-term memory sliding window for a namespace.
         """
         return self._short_term_memory.get(namespace, [])
+
+    def delete_short_term_memory(self, namespace: str, index: int) -> bool:
+        """Delete a specific conversational turn from short-term memory by index."""
+        if namespace in self._short_term_memory:
+            try:
+                self._short_term_memory[namespace].pop(index)
+                return True
+            except IndexError:
+                return False
+        return False
+
+    def clear_short_term_memory(self, namespace: str) -> None:
+        """Clear all conversational turns from short-term memory."""
+        self._short_term_memory[namespace] = []
 
     def consolidate_memory(self, namespace: str) -> Optional[str]:
         """
@@ -363,3 +440,37 @@ Conversation:
 
     def close(self):
         self.conn.close()
+\
+    def active_forgetting(self, namespace: str, max_capacity: int = 10000) -> int:
+        self.cursor.execute('SELECT id FROM memory_fts WHERE namespace=?', (namespace,))
+        rows = self.cursor.fetchall()
+        total_count = len(rows)
+        if total_count <= max_capacity: return 0
+        docs_to_delete = total_count - max_capacity
+        all_ids = [row[0] for row in rows]
+        scored_items = []
+        current_time = int(time.time())
+        for doc_id in all_ids:
+            stats = self._get_stats(doc_id)
+            if stats['is_pinned']: continue
+            self.cursor.execute('SELECT timestamp FROM memory_fts WHERE id=?', (doc_id,))
+            ts_row = self.cursor.fetchone()
+            if not ts_row: continue
+            timestamp = ts_row[0]
+            score = 1.0
+            import math
+            score *= (1.0 + 0.1 * math.log1p(stats['access_count']))
+            age_seconds = current_time - timestamp
+            decay_factor = 0.5 ** (age_seconds / 2592000.0)
+            score *= decay_factor
+            scored_items.append({'id': doc_id, 'score': score})
+        scored_items.sort(key=lambda x: x['score'])
+        delete_ids = [item['id'] for item in scored_items[:docs_to_delete]]
+        if delete_ids:
+            placeholders = ','.join(['?'] * len(delete_ids))
+            self.cursor.execute(f'DELETE FROM memory_fts WHERE id IN ({placeholders})', delete_ids)
+            self.cursor.execute(f'DELETE FROM memory_stats WHERE id IN ({placeholders})', delete_ids)
+            self.conn.commit()
+            self.collection.delete(ids=delete_ids)
+        return len(delete_ids)
+\

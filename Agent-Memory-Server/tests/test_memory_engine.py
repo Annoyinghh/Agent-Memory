@@ -189,3 +189,82 @@ def test_consolidate_memory(mock_completion, memory_engine):
     assert len(results) == 1
     assert "Python and FastAPI" in results[0].content
     assert results[0].source == "consolidation"
+
+def test_importance_scoring_access_count(memory_engine):
+    # RED Phase: Importance Scoring (Access Count)
+    namespace = "importance_test_ns"
+    doc_id = memory_engine.insert_memory("doc_freq_1", namespace, "This is a frequently accessed memory.", "test")
+    
+    # Initial score should be 1.0 (approx, depending on search match)
+    results1 = memory_engine.hybrid_search(namespace, "frequently accessed memory", top_k=1)
+    initial_score = results1[0].score
+    
+    # Simulate multiple accesses
+    for _ in range(5):
+        memory_engine.record_access(doc_id)
+        
+    # Score should increase
+    results2 = memory_engine.hybrid_search(namespace, "frequently accessed memory", top_k=1)
+    assert results2[0].score > initial_score
+
+def test_importance_scoring_pinned(memory_engine):
+    # RED Phase: Importance Scoring (Pinned)
+    namespace = "importance_test_ns"
+    doc_id = memory_engine.insert_memory("doc_pin_1", namespace, "This is a normal memory.", "test")
+    
+    results1 = memory_engine.hybrid_search(namespace, "normal memory", top_k=1)
+    initial_score = results1[0].score
+    
+    # Pin it
+    memory_engine.set_pinned(doc_id, True)
+    
+    # Score should get a massive boost
+    results2 = memory_engine.hybrid_search(namespace, "normal memory", top_k=1)
+    assert results2[0].score >= initial_score * 1.9
+\
+def test_active_forgetting(memory_engine):
+    namespace = 'forget_test_ns'
+    ids = []
+    for i in range(5):
+        ids.append(memory_engine.insert_memory(f'doc_forget_{i}', namespace, f'Forgettable memory {i}', 'test'))
+    memory_engine.set_pinned(ids[0], True)
+    deleted_count = memory_engine.active_forgetting(namespace, max_capacity=3)
+    assert deleted_count == 2
+    memory_engine.cursor.execute('SELECT COUNT(*) FROM memory_fts WHERE namespace=?', (namespace,))
+    assert memory_engine.cursor.fetchone()[0] == 3
+    memory_engine.cursor.execute('SELECT COUNT(*) FROM memory_fts WHERE id=?', (ids[0],))
+    assert memory_engine.cursor.fetchone()[0] == 1
+
+def test_session_management_and_isolation(memory_engine):
+    namespace = "session_test_ns"
+    session1 = "sess_001"
+    session2 = "sess_002"
+    
+    # 1. Create sessions
+    memory_engine.create_session(session1, namespace)
+    memory_engine.create_session(session2, namespace)
+    
+    # 2. List sessions
+    sessions = memory_engine.list_sessions(namespace)
+    assert len(sessions) == 2
+    assert session1 in [s["id"] for s in sessions]
+    
+    # 3. Short-term memory isolation
+    memory_engine.add_short_term_memory(namespace, "user", "Hello session 1", session_id=session1)
+    memory_engine.add_short_term_memory(namespace, "user", "Hello session 2", session_id=session2)
+    
+    history1 = memory_engine.get_short_term_memory(namespace, session_id=session1)
+    history2 = memory_engine.get_short_term_memory(namespace, session_id=session2)
+    
+    assert len(history1) == 1 and history1[0]["content"] == "Hello session 1"
+    assert len(history2) == 1 and history2[0]["content"] == "Hello session 2"
+    
+    # 4. Working memory isolation
+    memory_engine.write_working_memory(namespace, "current_task", "Task 1", session_id=session1)
+    memory_engine.write_working_memory(namespace, "current_task", "Task 2", session_id=session2)
+    
+    task1 = memory_engine.read_working_memory(namespace, "current_task", session_id=session1)
+    task2 = memory_engine.read_working_memory(namespace, "current_task", session_id=session2)
+    
+    assert task1 == "Task 1"
+    assert task2 == "Task 2"

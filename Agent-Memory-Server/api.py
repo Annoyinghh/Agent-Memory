@@ -157,6 +157,22 @@ class ConsolidateResponse(BaseModel):
     id: Optional[str]
     message: str
 
+class PinRequest(BaseModel):
+    doc_id: str
+    is_pinned: bool
+
+class AccessRequest(BaseModel):
+    doc_id: str
+
+class ForgetRequest(BaseModel):
+    namespace: str
+    max_capacity: int = 10000
+
+class ForgetResponse(BaseModel):
+    namespace: str
+    deleted_count: int
+
+
 # ── Endpoints ──────────────────────────────────────────────────
 
 @app.post("/api/memory/insert", response_model=InsertResponse)
@@ -209,6 +225,19 @@ def get_short_term_memory(namespace: str = Query(...)):
     history = engine.get_short_term_memory(namespace)
     return GetShortTermMemoryResponse(namespace=namespace, history=history)
 
+@app.delete("/api/memory/short_term", response_model=ShortTermMemoryResponse)
+def delete_short_term_memory(namespace: str = Query(...), index: Optional[int] = Query(None)):
+    """删除指定索引的短期对话记忆，若未指定 index 则清空全部"""
+    if index is not None:
+        success = engine.delete_short_term_memory(namespace, index)
+        if not success:
+            raise HTTPException(status_code=404, detail="Index out of range or namespace not found")
+        msg = "deleted"
+    else:
+        engine.clear_short_term_memory(namespace)
+        msg = "cleared"
+    return ShortTermMemoryResponse(namespace=namespace, message=msg)
+
 
 # ── Working Memory (Scratchpad) Endpoints ──
 
@@ -253,6 +282,18 @@ def consolidate_memory(req: ConsolidateRequest):
     else:
         return ConsolidateResponse(namespace=req.namespace, id=None, message="no history to consolidate or failed")
 
+
+@app.post("/api/memory/pin", response_model=StatusMessageResponse)
+def pin_memory(req: PinRequest):
+    """置顶/取消置顶某个长期记忆"""
+    engine.set_pinned(req.doc_id, req.is_pinned)
+    return StatusMessageResponse(message="pinned status updated")
+
+@app.post("/api/memory/access", response_model=StatusMessageResponse)
+def access_memory(req: AccessRequest):
+    """记录一次某长期记忆的访问（提高分数）"""
+    engine.record_access(req.doc_id)
+    return StatusMessageResponse(message="access recorded")
 
 @app.post("/api/memory/snapshot", response_model=SnapshotResponse)
 def create_snapshot(req: SnapshotRequest):
@@ -318,6 +359,12 @@ def get_stats():
     namespaces = {row[0]: row[1] for row in engine.cursor.fetchall()}
     return StatsResponse(total_chunks=total, namespaces=namespaces)
 
+
+@app.post("/api/memory/forget", response_model=ForgetResponse)
+def active_forgetting(req: ForgetRequest):
+    """Active Forgetting: Remove old/low-score memories exceeding capacity"""
+    deleted = engine.active_forgetting(req.namespace, req.max_capacity)
+    return ForgetResponse(namespace=req.namespace, deleted_count=deleted)
 
 if __name__ == "__main__":
     import uvicorn
