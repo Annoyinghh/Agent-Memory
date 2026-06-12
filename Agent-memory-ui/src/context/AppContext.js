@@ -12,6 +12,7 @@ export function AppProvider({ children }) {
   const [stats, setStats] = useState({ total_chunks: 0, namespaces: {} });
   const [isOnline, setIsOnline] = useState(false);
   const [lastEvent, setLastEvent] = useState({ type: 'init_silent', message: 'Holographic system standby.' });
+  const [isGraphAvatarExpanded, setIsGraphAvatarExpanded] = useState(false);
   const [avatarMuted, setAvatarMuted] = useState(false); // Default unmuted for startup voice
 
   const refreshData = useCallback(async (eventTrigger = null) => {
@@ -65,6 +66,8 @@ export function AppProvider({ children }) {
         avatarMuted,
         setAvatarMuted,
         refreshData,
+        isGraphAvatarExpanded,
+        setIsGraphAvatarExpanded,
       }}
     >
       {children}

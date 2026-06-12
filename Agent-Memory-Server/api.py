@@ -28,6 +28,15 @@ engine: MemoryEngine = None
 async def lifespan(app_instance):
     global engine
     engine = MemoryEngine(db_dir=os.environ.get("MEMORY_DB_DIR", "./data"))
+    
+    # Load protected namespaces from env (comma-separated)
+    protected = os.environ.get("PROTECTED_NAMESPACES", "")
+    for ns in protected.split(","):
+        ns = ns.strip()
+        if ns:
+            engine.protect_namespace(ns)
+            print(f"Namespace '{ns}' is protected (read-only)", file=sys.stderr)
+            
     yield
 
 app = FastAPI(title="Agent Memory Server API", version="1.0.0", lifespan=lifespan)
@@ -172,12 +181,49 @@ class ForgetResponse(BaseModel):
     namespace: str
     deleted_count: int
 
+class SessionCreateRequest(BaseModel):
+    namespace: str
+    session_id: Optional[str] = None
+
+class SessionResponse(BaseModel):
+    id: str
+    namespace: str
+    created_at: int
+    last_active: int
+    status: str
+
+class SessionListResponse(BaseModel):
+    namespace: str
+    sessions: list[SessionResponse]
+
+class SessionStatusRequest(BaseModel):
+    status: str
+
+class SessionLinkRequest(BaseModel):
+    session_id: str
+    memory_id: str
+
+class SessionContextRequest(BaseModel):
+    session_id: str
+    max_tokens: int = 2000
+
+class SessionContextResponse(BaseModel):
+    session_id: str
+    namespace: str
+    packed_context: str
+
+
+def _check_protected(namespace: str):
+    if engine.is_protected(namespace):
+        raise HTTPException(status_code=403, detail=f"Namespace '{namespace}' is protected (read-only)")
+
 
 # ── Endpoints ──────────────────────────────────────────────────
 
 @app.post("/api/memory/insert", response_model=InsertResponse)
 def insert_memory(req: InsertRequest):
     """插入一条记忆（支持语义去重）"""
+    _check_protected(req.namespace)
     doc_id = str(uuid.uuid4())
     final_id = engine.insert_memory(doc_id, req.namespace, req.content, req.source, dedup_threshold=req.dedup_threshold)
     msg = "ok" if final_id == doc_id else "merged"
@@ -187,6 +233,7 @@ def insert_memory(req: InsertRequest):
 @app.post("/api/memory/update", response_model=UpdateResponse)
 def update_memory(req: UpdateRequest):
     """按 doc_id 更新一条记忆"""
+    _check_protected(req.namespace)
     success = engine.update_memory(req.doc_id, req.namespace, req.content, req.source)
     if not success:
         raise HTTPException(status_code=404, detail="Memory not found or update failed")
@@ -323,9 +370,11 @@ def search_memory_get(
 @app.delete("/api/memory/delete", response_model=DeleteResponse)
 def delete_memory(req: DeleteRequest):
     """按 doc_id 或 source 前缀删除记忆"""
+    _check_protected(req.namespace)
     if req.doc_id:
         engine.collection.delete(ids=[req.doc_id])
         engine.cursor.execute("DELETE FROM memory_fts WHERE id = ?", (req.doc_id,))
+        engine.cursor.execute("DELETE FROM memory_edges WHERE from_id = ? OR to_id = ?", (req.doc_id, req.doc_id))
         engine.conn.commit()
         return DeleteResponse(deleted_count=1, message="deleted by id")
     elif req.source_prefix:
@@ -338,6 +387,7 @@ def delete_memory(req: DeleteRequest):
             engine.collection.delete(ids=ids)
             placeholders = ",".join(["?"] * len(ids))
             engine.cursor.execute(f"DELETE FROM memory_fts WHERE id IN ({placeholders})", ids)
+            engine.cursor.execute(f"DELETE FROM memory_edges WHERE from_id IN ({placeholders}) OR to_id IN ({placeholders})", ids + ids)
             engine.conn.commit()
         return DeleteResponse(deleted_count=len(ids), message=f"deleted by source prefix: {req.source_prefix}")
     else:
@@ -363,8 +413,208 @@ def get_stats():
 @app.post("/api/memory/forget", response_model=ForgetResponse)
 def active_forgetting(req: ForgetRequest):
     """Active Forgetting: Remove old/low-score memories exceeding capacity"""
+    _check_protected(req.namespace)
     deleted = engine.active_forgetting(req.namespace, req.max_capacity)
     return ForgetResponse(namespace=req.namespace, deleted_count=deleted)
+
+
+# ── Session Management Endpoints ──
+
+@app.post("/api/sessions", response_model=SessionResponse)
+def create_session(req: SessionCreateRequest):
+    session_id = engine.create_session(req.namespace, req.session_id)
+    session = engine.get_session(session_id)
+    return SessionResponse(**session)
+
+
+@app.get("/api/sessions", response_model=SessionListResponse)
+def list_sessions(namespace: str = Query(...), status: Optional[str] = Query(None)):
+    sessions = engine.list_sessions(namespace, status)
+    return SessionListResponse(namespace=namespace, sessions=[SessionResponse(**s) for s in sessions])
+
+
+@app.get("/api/sessions/{session_id}", response_model=SessionResponse)
+def get_session(session_id: str):
+    session = engine.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return SessionResponse(**session)
+
+
+@app.put("/api/sessions/{session_id}/status", response_model=StatusMessageResponse)
+def update_session_status(session_id: str, req: SessionStatusRequest):
+    success = engine.update_session_status(session_id, req.status)
+    if not success:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return StatusMessageResponse(message=f"Session status updated to {req.status}")
+
+
+@app.post("/api/sessions/link", response_model=StatusMessageResponse)
+def link_memory_to_session(req: SessionLinkRequest):
+    engine.link_memory_to_session(req.session_id, req.memory_id)
+    return StatusMessageResponse(message="memory linked to session")
+
+
+@app.post("/api/sessions/unlink", response_model=StatusMessageResponse)
+def unlink_memory_from_session(req: SessionLinkRequest):
+    success = engine.unlink_memory_from_session(req.session_id, req.memory_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Link not found")
+    return StatusMessageResponse(message="memory unlinked from session")
+
+
+@app.get("/api/sessions/{session_id}/memories")
+def get_session_memories(session_id: str):
+    memories = engine.get_session_memories(session_id)
+    return {"session_id": session_id, "memories": memories}
+
+
+@app.post("/api/sessions/context", response_model=SessionContextResponse)
+def get_session_context(req: SessionContextRequest):
+    session = engine.get_session(req.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    packed = engine.get_session_context(req.session_id, req.max_tokens)
+    return SessionContextResponse(session_id=req.session_id, namespace=session["namespace"], packed_context=packed)
+
+
+@app.delete("/api/sessions/{session_id}", response_model=StatusMessageResponse)
+def delete_session(session_id: str):
+    success = engine.delete_session(session_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return StatusMessageResponse(message="session deleted")
+
+
+# ── Namespace Protection Endpoints ──
+
+class NamespaceProtectRequest(BaseModel):
+    namespace: str
+
+@app.post("/api/namespaces/protect", response_model=StatusMessageResponse)
+def protect_namespace(req: NamespaceProtectRequest):
+    engine.protect_namespace(req.namespace)
+    return StatusMessageResponse(message=f"Namespace '{req.namespace}' is now protected")
+
+@app.post("/api/namespaces/unprotect", response_model=StatusMessageResponse)
+def unprotect_namespace(req: NamespaceProtectRequest):
+    engine.unprotect_namespace(req.namespace)
+    return StatusMessageResponse(message=f"Namespace '{req.namespace}' is now unprotected")
+
+@app.get("/api/namespaces/protected")
+def list_protected_namespaces():
+    return {"protected_namespaces": list(engine.protected_namespaces)}
+
+
+# ── Knowledge Graph Endpoints (Graphify Integration) ──
+
+class EdgeRequest(BaseModel):
+    from_id: str
+    to_id: str
+    relation_type: str
+    confidence: float = 1.0
+
+class EdgeRemoveRequest(BaseModel):
+    from_id: str
+    to_id: str
+    relation_type: str
+
+class NeighborRequest(BaseModel):
+    node_id: str
+    relation_type: Optional[str] = None
+    direction: str = "both"
+    limit: int = 50
+
+class PathRequest(BaseModel):
+    from_id: str
+    to_id: str
+    max_depth: int = 5
+
+class GraphImportRequest(BaseModel):
+    namespace: str
+    nodes: list[dict]
+    edges: list[dict]
+
+class GraphImportResponse(BaseModel):
+    nodes_imported: int
+    edges_imported: int
+    id_map_size: int
+
+@app.get("/api/graph/data")
+def get_graph_data(namespace: str = Query(...)):
+    """获取指定命名空间的所有图谱节点与连线数据"""
+    return engine.get_graph_data(namespace)
+
+@app.post("/api/graph/edge", response_model=StatusMessageResponse)
+def add_edge(req: EdgeRequest):
+    engine.add_edge(req.from_id, req.to_id, req.relation_type, req.confidence)
+    return StatusMessageResponse(message="edge added")
+
+@app.delete("/api/graph/edge", response_model=StatusMessageResponse)
+def remove_edge(req: EdgeRemoveRequest):
+    success = engine.remove_edge(req.from_id, req.to_id, req.relation_type)
+    if not success:
+        raise HTTPException(status_code=404, detail="Edge not found")
+    return StatusMessageResponse(message="edge removed")
+
+@app.post("/api/graph/neighbors")
+def get_neighbors(req: NeighborRequest):
+    neighbors = engine.get_neighbors(req.node_id, req.relation_type, req.direction, req.limit)
+    return {"node_id": req.node_id, "neighbors": neighbors}
+
+@app.get("/api/graph/node/{node_id}")
+def get_node_detail(node_id: str):
+    node = engine.get_node_detail(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    return node
+
+@app.post("/api/graph/path")
+def shortest_path(req: PathRequest):
+    path = engine.shortest_path(req.from_id, req.to_id, req.max_depth)
+    return {"from_id": req.from_id, "to_id": req.to_id, "path": path, "found": len(path) > 0}
+
+@app.get("/api/graph/stats")
+def graph_stats(namespace: str = Query(None)):
+    return engine.get_graph_stats(namespace)
+
+
+@app.get("/api/graph/data")
+def get_graph_data(namespace: str = Query("all"), limit: int = Query(500)):
+    """Get nodes and edges for graph visualization, capped at limit nodes."""
+    return engine.get_graph_data(namespace, limit)
+
+@app.post("/api/graph/import", response_model=GraphImportResponse)
+def import_graph_data(req: GraphImportRequest):
+    _check_protected(req.namespace)
+    result = engine.import_graph_data(req.nodes, req.edges, req.namespace)
+    return GraphImportResponse(**result)
+
+
+class GraphExtractRequest(BaseModel):
+    target_dir: str
+    namespace: str
+
+class GraphFileImportRequest(BaseModel):
+    graph_path: str
+    namespace: str
+
+@app.post("/api/graph/extract")
+def extract_codebase(req: GraphExtractRequest):
+    """Run Graphify extraction on a directory and import into Agent Memory."""
+    _check_protected(req.namespace)
+    from graphify_bridge import extract_to_memory
+    result = extract_to_memory(req.target_dir, req.namespace, os.environ.get("MEMORY_DB_DIR", "./data"))
+    return result
+
+@app.post("/api/graph/import-file")
+def import_graph_file(req: GraphFileImportRequest):
+    """Import an existing graphify graph.json file into Agent Memory."""
+    _check_protected(req.namespace)
+    from graphify_bridge import import_from_graph_json
+    result = import_from_graph_json(req.graph_path, req.namespace, os.environ.get("MEMORY_DB_DIR", "./data"))
+    return result
+
 
 if __name__ == "__main__":
     import uvicorn
@@ -375,5 +625,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     os.environ["MEMORY_DB_DIR"] = args.db_dir
+
     print(f"Agent Memory REST API starting on http://{args.host}:{args.port}", file=sys.stderr)
     uvicorn.run(app, host=args.host, port=args.port)

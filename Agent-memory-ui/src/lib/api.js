@@ -228,4 +228,302 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ namespace }),
     }),
+
+  /**
+   * Pin or unpin a long term memory
+   * @param {string} docId
+   * @param {boolean} isPinned
+   * @returns {Promise<{message: string}>}
+   */
+  pinMemory: (docId, isPinned) =>
+    request('/api/memory/pin', {
+      method: 'POST',
+      body: JSON.stringify({ doc_id: docId, is_pinned: isPinned }),
+    }),
+
+  /**
+   * Record access/read simulation on a memory
+   * @param {string} docId
+   * @returns {Promise<{message: string}>}
+   */
+  accessMemory: (docId) =>
+    request('/api/memory/access', {
+      method: 'POST',
+      body: JSON.stringify({ doc_id: docId }),
+    }),
+
+  /**
+   * Active Forgetting: remove memories exceeding capacity
+   * @param {string} namespace
+   * @param {number} maxCapacity
+   * @returns {Promise<{namespace: string, deleted_count: number}>}
+   */
+  activeForgetting: (namespace, maxCapacity = 10000) =>
+    request('/api/memory/forget', {
+      method: 'POST',
+      body: JSON.stringify({ namespace, max_capacity: maxCapacity }),
+    }),
+
+  // ── Session Management ──
+
+  /**
+   * Create a new session
+   * @param {string} namespace
+   * @param {string} [sessionId]
+   * @returns {Promise<{id: string, namespace: string, created_at: number, last_active: number, status: string}>}
+   */
+  createSession: (namespace, sessionId = null) => {
+    const body = { namespace };
+    if (sessionId) body.session_id = sessionId;
+    return request('/api/sessions', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  },
+
+  /**
+   * List sessions for a namespace
+   * @param {string} namespace
+   * @param {string} [status] - 'active', 'archived', 'closed'
+   * @returns {Promise<{namespace: string, sessions: Array<{id: string, namespace: string, created_at: number, last_active: number, status: string}>}>}
+   */
+  listSessions: (namespace, status = null) => {
+    let url = `/api/sessions?namespace=${encodeURIComponent(namespace)}`;
+    if (status) url += `&status=${encodeURIComponent(status)}`;
+    return request(url, { method: 'GET' });
+  },
+
+  /**
+   * Get a single session
+   * @param {string} sessionId
+   * @returns {Promise<{id: string, namespace: string, created_at: number, last_active: number, status: string}>}
+   */
+  getSession: (sessionId) =>
+    request(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: 'GET' }),
+
+  /**
+   * Update session status
+   * @param {string} sessionId
+   * @param {string} status - 'active', 'archived', 'closed'
+   * @returns {Promise<{message: string}>}
+   */
+  updateSessionStatus: (sessionId, status) =>
+    request(`/api/sessions/${encodeURIComponent(sessionId)}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+    }),
+
+  /**
+   * Link a memory to a session
+   * @param {string} sessionId
+   * @param {string} memoryId
+   * @returns {Promise<{message: string}>}
+   */
+  linkMemoryToSession: (sessionId, memoryId) =>
+    request('/api/sessions/link', {
+      method: 'POST',
+      body: JSON.stringify({ session_id: sessionId, memory_id: memoryId }),
+    }),
+
+  /**
+   * Unlink a memory from a session
+   * @param {string} sessionId
+   * @param {string} memoryId
+   * @returns {Promise<{message: string}>}
+   */
+  unlinkMemoryFromSession: (sessionId, memoryId) =>
+    request('/api/sessions/unlink', {
+      method: 'POST',
+      body: JSON.stringify({ session_id: sessionId, memory_id: memoryId }),
+    }),
+
+  /**
+   * Get memories linked to a session
+   * @param {string} sessionId
+   * @returns {Promise<{session_id: string, memories: Array>}>}
+   */
+  getSessionMemories: (sessionId) =>
+    request(`/api/sessions/${encodeURIComponent(sessionId)}/memories`, { method: 'GET' }),
+
+  /**
+   * Pack context from session's linked memories
+   * @param {string} sessionId
+   * @param {number} [maxTokens=2000]
+   * @returns {Promise<{session_id: string, namespace: string, packed_context: string}>}
+   */
+  getSessionContext: (sessionId, maxTokens = 2000) =>
+    request('/api/sessions/context', {
+      method: 'POST',
+      body: JSON.stringify({ session_id: sessionId, max_tokens: maxTokens }),
+    }),
+
+  /**
+   * Delete a session and its memory links
+   * @param {string} sessionId
+   * @returns {Promise<{message: string}>}
+   */
+  deleteSession: (sessionId) =>
+    request(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' }),
+
+  // ── Namespace Protection ──
+
+  /**
+   * Protect a namespace (make it read-only)
+   * @param {string} namespace
+   * @returns {Promise<{message: string}>}
+   */
+  protectNamespace: (namespace) =>
+    request('/api/namespaces/protect', {
+      method: 'POST',
+      body: JSON.stringify({ namespace }),
+    }),
+
+  /**
+   * Remove protection from a namespace
+   * @param {string} namespace
+   * @returns {Promise<{message: string}>}
+   */
+  unprotectNamespace: (namespace) =>
+    request('/api/namespaces/unprotect', {
+      method: 'POST',
+      body: JSON.stringify({ namespace }),
+    }),
+
+  /**
+   * List all protected namespaces
+   * @returns {Promise<{protected_namespaces: string[]}>}
+   */
+  getProtectedNamespaces: () =>
+    request('/api/namespaces/protected', { method: 'GET' }),
+
+  // ── Knowledge Graph (Graphify Integration) ──
+
+  /**
+   * Add an edge between two memory nodes
+   * @param {string} fromId
+   * @param {string} toId
+   * @param {string} relationType
+   * @param {number} [confidence=1.0]
+   * @returns {Promise<{message: string}>}
+   */
+  addEdge: (fromId, toId, relationType, confidence = 1.0) =>
+    request('/api/graph/edge', {
+      method: 'POST',
+      body: JSON.stringify({ from_id: fromId, to_id: toId, relation_type: relationType, confidence }),
+    }),
+
+  /**
+   * Remove an edge between two memory nodes
+   * @param {string} fromId
+   * @param {string} toId
+   * @param {string} relationType
+   * @returns {Promise<{message: string}>}
+   */
+  removeEdge: (fromId, toId, relationType) =>
+    request('/api/graph/edge', {
+      method: 'DELETE',
+      body: JSON.stringify({ from_id: fromId, to_id: toId, relation_type: relationType }),
+    }),
+
+  /**
+   * Get neighbors of a memory node
+   * @param {string} nodeId
+   * @param {string} [relationType]
+   * @param {string} [direction='both']
+   * @param {number} [limit=50]
+   * @returns {Promise<{node_id: string, neighbors: Array}>}
+   */
+  getNeighbors: (nodeId, relationType = null, direction = 'both', limit = 50) =>
+    request('/api/graph/neighbors', {
+      method: 'POST',
+      body: JSON.stringify({ node_id: nodeId, relation_type: relationType, direction, limit }),
+    }),
+
+  /**
+   * Get full details of a memory node including edges
+   * @param {string} nodeId
+   * @returns {Promise<{id: string, namespace: string, content: string, edges: Array}>}
+   */
+  getNodeDetail: (nodeId) =>
+    request(`/api/graph/node/${encodeURIComponent(nodeId)}`, { method: 'GET' }),
+
+  /**
+   * Find shortest path between two memory nodes
+   * @param {string} fromId
+   * @param {string} toId
+   * @param {number} [maxDepth=5]
+   * @returns {Promise<{from_id: string, to_id: string, path: Array, found: boolean}>}
+   */
+  findPath: (fromId, toId, maxDepth = 5) =>
+    request('/api/graph/path', {
+      method: 'POST',
+      body: JSON.stringify({ from_id: fromId, to_id: toId, max_depth: maxDepth }),
+    }),
+
+  /**
+   * Get graph statistics
+   * @param {string} [namespace]
+   * @returns {Promise<{nodes: number, edges: number, relation_types: string[]}>}
+   */
+  graphStats: (namespace = null) => {
+    let url = '/api/graph/stats';
+    if (namespace) url += `?namespace=${encodeURIComponent(namespace)}`;
+    return request(url, { method: 'GET' });
+  },
+
+  /**
+   * Get graph data (nodes + edges) for visualization, capped at limit
+   * @param {string} [namespace='all']
+   * @param {number} [limit=500]
+   * @returns {Promise<{nodes: Array, edges: Array}>}
+   */
+  getGraphData: (namespace = 'all', limit = 500) =>
+    request(`/api/graph/data?namespace=${encodeURIComponent(namespace)}&limit=${limit}`, { method: 'GET' }),
+
+  /**
+   * Batch import graph data (nodes + edges)
+   * @param {string} namespace
+   * @param {Array} nodes
+   * @param {Array} edges
+   * @returns {Promise<{nodes_imported: number, edges_imported: number, id_map_size: number}>}
+   */
+  importGraph: (namespace, nodes, edges) =>
+    request('/api/graph/import', {
+      method: 'POST',
+      body: JSON.stringify({ namespace, nodes, edges }),
+    }),
+
+  /**
+   * Run Graphify extraction on a directory and import into Agent Memory
+   * @param {string} targetDir - Directory to extract
+   * @param {string} namespace - Target namespace
+   * @returns {Promise<{nodes_imported: number, edges_imported: number, id_map_size: number}>}
+   */
+  extractCodebase: (targetDir, namespace) =>
+    request('/api/graph/extract', {
+      method: 'POST',
+      body: JSON.stringify({ target_dir: targetDir, namespace }),
+    }),
+
+  /**
+   * Import an existing graphify graph.json file into Agent Memory
+   * @param {string} graphPath - Path to graph.json
+   * @param {string} namespace - Target namespace
+   * @returns {Promise<{nodes_imported: number, edges_imported: number, id_map_size: number}>}
+   */
+  importGraphFile: (graphPath, namespace) =>
+    request('/api/graph/import-file', {
+      method: 'POST',
+      body: JSON.stringify({ graph_path: graphPath, namespace }),
+    }),
+
+  /**
+   * Get all nodes and edges for a given namespace
+   * @param {string} namespace
+   * @returns {Promise<{nodes: Array, edges: Array}>}
+   */
+  getGraphData: (namespace) =>
+    request(`/api/graph/data?namespace=${encodeURIComponent(namespace)}`, {
+      method: 'GET',
+    }),
 };

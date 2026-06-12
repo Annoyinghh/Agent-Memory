@@ -5,6 +5,7 @@ import { useApp } from '@/context/AppContext';
 import { api } from '@/lib/api';
 import GlassCard from '@/components/GlassCard';
 import DigitalAvatar from '@/components/DigitalAvatar';
+import KnowledgeGraph from '@/components/KnowledgeGraph';
 
 export default function SPAHomepage() {
   const { 
@@ -18,7 +19,8 @@ export default function SPAHomepage() {
     activeTab, 
     setActiveTab, 
     refreshData,
-    avatarMuted
+    avatarMuted,
+    isGraphAvatarExpanded
   } = useApp();
 
   // ────────────────────────────────────────────────────────
@@ -278,6 +280,218 @@ export default function SPAHomepage() {
   const [consolidationLoading, setConsolidationLoading] = useState(false);
   const [consolidationMessage, setConsolidationMessage] = useState(null);
   const [consolidationId, setConsolidationId] = useState(null);
+
+  // ────────────────────────────────────────────────────────
+  // 4. Session Management (P2) State & Logic
+  // ────────────────────────────────────────────────────────
+  const [sessions, setSessions] = useState([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [selectedSession, setSelectedSession] = useState(null);
+  const [sessionMemories, setSessionMemories] = useState([]);
+  const [newSessionId, setNewSessionId] = useState('');
+  const [createSessionLoading, setCreateSessionLoading] = useState(false);
+  const [sessionContext, setSessionContext] = useState('');
+  const [sessionContextLoading, setSessionContextLoading] = useState(false);
+  const [linkMemoryId, setLinkMemoryId] = useState('');
+  const [sessionStatusFilter, setSessionStatusFilter] = useState(null);
+
+  const fetchSessions = async () => {
+    if (!activeNamespace || activeNamespace === 'all') return;
+    setSessionsLoading(true);
+    try {
+      const res = await api.listSessions(activeNamespace, sessionStatusFilter);
+      setSessions(res.sessions || []);
+    } catch (err) {
+      console.error('Failed to fetch sessions:', err);
+    } finally {
+      setSessionsLoading(false);
+    }
+  };
+
+  const fetchSessionMemories = async (sessionId) => {
+    try {
+      const res = await api.getSessionMemories(sessionId);
+      setSessionMemories(res.memories || []);
+    } catch (err) {
+      console.error('Failed to fetch session memories:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'sessions') {
+      fetchSessions();
+    }
+  }, [activeTab, activeNamespace, sessionStatusFilter]);
+
+  useEffect(() => {
+    if (selectedSession) {
+      fetchSessionMemories(selectedSession.id);
+    } else {
+      setSessionMemories([]);
+    }
+  }, [selectedSession]);
+
+  const handleCreateSession = async (e) => {
+    if (e) e.preventDefault();
+    if (activeNamespace === 'all') return;
+    setCreateSessionLoading(true);
+    try {
+      const res = await api.createSession(activeNamespace, newSessionId.trim() || null);
+      setNewSessionId('');
+      await fetchSessions();
+      setSelectedSession(res);
+      setLastEvent({ type: 'insert', message: `会话已创建 [${res.id.substring(0, 8)}...]` });
+    } catch (err) {
+      console.error(err);
+      alert('创建会话失败');
+    } finally {
+      setCreateSessionLoading(false);
+    }
+  };
+
+  const handleUpdateSessionStatus = async (sessionId, status) => {
+    try {
+      await api.updateSessionStatus(sessionId, status);
+      await fetchSessions();
+      if (selectedSession?.id === sessionId) {
+        setSelectedSession({ ...selectedSession, status });
+      }
+      setLastEvent({ type: 'insert', message: `会话状态已更新为 ${status}` });
+    } catch (err) {
+      console.error(err);
+      alert('更新会话状态失败');
+    }
+  };
+
+  const handleDeleteSession = async (sessionId) => {
+    if (!confirm('确定要删除此会话及其关联吗？')) return;
+    try {
+      await api.deleteSession(sessionId);
+      if (selectedSession?.id === sessionId) {
+        setSelectedSession(null);
+        setSessionMemories([]);
+      }
+      await fetchSessions();
+      setLastEvent({ type: 'delete', message: '会话已删除' });
+    } catch (err) {
+      console.error(err);
+      alert('删除会话失败');
+    }
+  };
+
+  const handleGetSessionContext = async (sessionId) => {
+    setSessionContextLoading(true);
+    setSessionContext('');
+    try {
+      const res = await api.getSessionContext(sessionId);
+      setSessionContext(res.packed_context || '');
+    } catch (err) {
+      console.error(err);
+      alert('获取会话上下文失败');
+    } finally {
+      setSessionContextLoading(false);
+    }
+  };
+
+  const handleLinkMemory = async (e) => {
+    if (e) e.preventDefault();
+    if (!selectedSession || !linkMemoryId.trim()) return;
+    try {
+      await api.linkMemoryToSession(selectedSession.id, linkMemoryId.trim());
+      setLinkMemoryId('');
+      await fetchSessionMemories(selectedSession.id);
+      setLastEvent({ type: 'insert', message: '记忆已关联到会话' });
+    } catch (err) {
+      console.error(err);
+      alert('关联记忆失败');
+    }
+  };
+
+  const handleUnlinkMemory = async (memoryId) => {
+    if (!selectedSession) return;
+    try {
+      await api.unlinkMemoryFromSession(selectedSession.id, memoryId);
+      await fetchSessionMemories(selectedSession.id);
+      setLastEvent({ type: 'delete', message: '已解除记忆与会话的关联' });
+    } catch (err) {
+      console.error(err);
+      alert('解除关联失败');
+    }
+  };
+
+  // ────────────────────────────────────────────────────────
+  // 5. Active Forgetting / Decay (P2) State & Logic
+  // ────────────────────────────────────────────────────────
+  const [forgetCapacity, setForgetCapacity] = useState(10000);
+  const [forgetLoading, setForgettingLoading] = useState(false);
+  const [forgetResult, setForgetResult] = useState(null);
+  const [protectedNamespaces, setProtectedNamespaces] = useState([]);
+  const [protectLoading, setProtectLoading] = useState(false);
+  const [protectTargetNs, setProtectTargetNs] = useState('');
+
+  const fetchProtected = async () => {
+    try {
+      const res = await api.getProtectedNamespaces();
+      setProtectedNamespaces(res.protected_namespaces || []);
+    } catch (err) {
+      console.error('Failed to fetch protected namespaces:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'decay') {
+      fetchProtected();
+    }
+  }, [activeTab]);
+
+  const handleActiveForgetting = async (e) => {
+    if (e) e.preventDefault();
+    if (activeNamespace === 'all') return;
+    setForgettingLoading(true);
+    setForgetResult(null);
+    try {
+      const res = await api.activeForgetting(activeNamespace, forgetCapacity);
+      setForgetResult(res);
+      await refreshData({
+        type: 'delete',
+        namespace: activeNamespace,
+        message: `主动遗忘执行完毕，共淘汰 ${res.deleted_count} 条低价值记忆。`
+      });
+    } catch (err) {
+      console.error(err);
+      alert('主动遗忘执行失败');
+    } finally {
+      setForgettingLoading(false);
+    }
+  };
+
+  const handleProtectNamespace = async (e) => {
+    if (e) e.preventDefault();
+    if (!protectTargetNs.trim()) return;
+    setProtectLoading(true);
+    try {
+      await api.protectNamespace(protectTargetNs.trim());
+      setProtectTargetNs('');
+      await fetchProtected();
+      setLastEvent({ type: 'insert', message: `命名空间 [${protectTargetNs}] 已设为受保护 (只读)` });
+    } catch (err) {
+      console.error(err);
+      alert('保护操作失败');
+    } finally {
+      setProtectLoading(false);
+    }
+  };
+
+  const handleUnprotectNamespace = async (ns) => {
+    try {
+      await api.unprotectNamespace(ns);
+      await fetchProtected();
+      setLastEvent({ type: 'delete', message: `命名空间 [${ns}] 已解除保护` });
+    } catch (err) {
+      console.error(err);
+      alert('解除保护失败');
+    }
+  };
 
   const fetchMemoryLayersData = async () => {
     if (!activeNamespace || activeNamespace === 'all') return;
@@ -556,7 +770,7 @@ export default function SPAHomepage() {
         {/* ============================================================ */}
         {/* CENTER COLUMN: Large Interactive Holographic Head            */}
         {/* ============================================================ */}
-        <div className="avatar-center-panel">
+        <div className={`avatar-center-panel ${activeTab === 'graph' ? (isGraphAvatarExpanded ? 'graph-avatar-expanded' : 'graph-avatar-collapsed') : ''}`}>
           <div className="radar-background"></div>
           <div className="avatar-container-inner">
             <DigitalAvatar />
@@ -1525,6 +1739,323 @@ export default function SPAHomepage() {
           </div>
         )}
 
+        {/* TAB 5: SESSIONS (会话管理) */}
+        {activeTab === 'sessions' && (
+          <div className="tab-view-content fade-in-view ingest-tab-layout">
+            {activeNamespace === 'all' ? (
+              <div style={{ display: 'flex', justifyContent: 'center', padding: '40px', width: '100%' }}>
+                <GlassCard title="系统提示 // SYSTEM NOTICE" glowColor="purple" className="op-panel-card" style={{ maxWidth: '600px', width: '100%' }}>
+                  <div style={{ padding: '20px', textAlign: 'center', fontFamily: 'var(--font-mono)' }}>
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ color: 'hsl(var(--color-purple))', margin: '0 auto 16px', display: 'block' }}>
+                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01" />
+                    </svg>
+                    <div style={{ fontSize: '14px', fontWeight: 'bold', color: 'white', marginBottom: '8px' }}>请选择特定的命名空间</div>
+                    <div style={{ fontSize: '12px', color: 'hsl(var(--text-muted))', lineHeight: '1.6' }}>
+                      会话管理需要指定特定的命名空间进行分区隔离。请在左侧或导航面板中选择具体的命名空间。
+                    </div>
+                  </div>
+                </GlassCard>
+              </div>
+            ) : (
+              <>
+                <div className="ingest-column">
+                  <GlassCard title="创建会话 (Create Session)" glowColor="cyan" className="op-panel-card">
+                    <form onSubmit={handleCreateSession} className="sci-form">
+                      <div className="form-group-sci">
+                        <label>命名空间 (Namespace)</label>
+                        <input type="text" value={activeNamespace} className="sci-control-input" disabled style={{ opacity: 0.6 }} />
+                      </div>
+                      <div className="form-group-sci">
+                        <label>会话 ID (可选，留空自动生成)</label>
+                        <input type="text" value={newSessionId} onChange={(e) => setNewSessionId(e.target.value)} placeholder="自定义会话 ID..." className="sci-control-input" />
+                      </div>
+                      <button type="submit" className="sci-submit-btn bg-cyan" disabled={createSessionLoading}>
+                        {createSessionLoading ? '创建中...' : '创建新会话'}
+                      </button>
+                    </form>
+                  </GlassCard>
+
+                  <GlassCard title="会话列表 (Session List)" glowColor="purple" className="op-panel-card">
+                    <div style={{ marginBottom: '12px' }}>
+                      <select
+                        value={sessionStatusFilter || ''}
+                        onChange={(e) => setSessionStatusFilter(e.target.value || null)}
+                        className="sci-control-select"
+                      >
+                        <option value="">全部状态</option>
+                        <option value="active">活跃 (Active)</option>
+                        <option value="archived">已归档 (Archived)</option>
+                        <option value="closed">已关闭 (Closed)</option>
+                      </select>
+                    </div>
+                    {sessionsLoading ? (
+                      <div className="search-status-banner font-mono" style={{ padding: '20px' }}>[ LOADING_SESSIONS // 会话数据加载中... ]</div>
+                    ) : sessions.length === 0 ? (
+                      <div className="search-empty-banner font-mono" style={{ padding: '20px' }}>[ NO_SESSIONS // 当前命名空间下暂无会话记录 ]</div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '300px', overflowY: 'auto' }}>
+                        {sessions.map((s) => (
+                          <div
+                            key={s.id}
+                            onClick={() => setSelectedSession(s)}
+                            style={{
+                              padding: '10px 12px',
+                              border: `1px solid ${selectedSession?.id === s.id ? 'hsl(var(--color-cyan))' : 'rgba(255,255,255,0.06)'}`,
+                              borderRadius: '6px',
+                              cursor: 'pointer',
+                              background: selectedSession?.id === s.id ? 'rgba(0,242,254,0.06)' : 'rgba(0,0,0,0.2)',
+                              transition: 'all 0.2s ease',
+                              fontFamily: 'var(--font-mono)',
+                              fontSize: '11px',
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                              <span style={{ color: 'hsl(var(--color-cyan))', fontSize: '10px' }}>{s.id.substring(0, 12)}...</span>
+                              <span style={{
+                                padding: '1px 8px',
+                                borderRadius: '3px',
+                                fontSize: '9px',
+                                fontWeight: 'bold',
+                                background: s.status === 'active' ? 'rgba(74,222,128,0.1)' : s.status === 'archived' ? 'rgba(255,187,0,0.1)' : 'rgba(244,63,94,0.1)',
+                                color: s.status === 'active' ? 'hsl(var(--color-green))' : s.status === 'archived' ? 'hsl(var(--color-cyan))' : 'hsl(var(--color-red))',
+                              }}>
+                                {s.status.toUpperCase()}
+                              </span>
+                            </div>
+                            <div style={{ color: 'hsl(var(--text-muted))', fontSize: '9px' }}>
+                              创建: {new Date(s.created_at * 1000).toLocaleString('zh-CN')}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </GlassCard>
+                </div>
+
+                <div className="ingest-column">
+                  {selectedSession ? (
+                    <>
+                      <GlassCard title={`会话详情 // ${selectedSession.id.substring(0, 12)}...`} glowColor="cyan" className="op-panel-card">
+                        <div className="sci-form" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '11px', fontFamily: 'var(--font-mono)' }}>
+                            <div style={{ padding: '8px', background: 'rgba(0,0,0,0.3)', borderRadius: '4px' }}>
+                              <span style={{ color: 'hsl(var(--text-muted))' }}>状态:</span>
+                              <span style={{ marginLeft: '6px', color: selectedSession.status === 'active' ? 'hsl(var(--color-green))' : 'hsl(var(--text-primary))' }}>{selectedSession.status}</span>
+                            </div>
+                            <div style={{ padding: '8px', background: 'rgba(0,0,0,0.3)', borderRadius: '4px' }}>
+                              <span style={{ color: 'hsl(var(--text-muted))' }}>命名空间:</span>
+                              <span style={{ marginLeft: '6px' }}>{selectedSession.namespace}</span>
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                            {selectedSession.status === 'active' && (
+                              <button type="button" onClick={() => handleUpdateSessionStatus(selectedSession.id, 'archived')} className="sci-submit-btn" style={{ background: 'rgba(255,187,0,0.15)', color: 'hsl(var(--color-cyan))', height: '28px', fontSize: '10px' }}>
+                                归档
+                              </button>
+                            )}
+                            {(selectedSession.status === 'active' || selectedSession.status === 'archived') && (
+                              <button type="button" onClick={() => handleUpdateSessionStatus(selectedSession.id, 'closed')} className="sci-submit-btn" style={{ background: 'rgba(244,63,94,0.1)', color: 'hsl(var(--color-red))', height: '28px', fontSize: '10px' }}>
+                                关闭
+                              </button>
+                            )}
+                            {selectedSession.status === 'closed' && (
+                              <button type="button" onClick={() => handleUpdateSessionStatus(selectedSession.id, 'active')} className="sci-submit-btn bg-cyan" style={{ height: '28px', fontSize: '10px' }}>
+                                重新激活
+                              </button>
+                            )}
+                            <button type="button" onClick={() => handleGetSessionContext(selectedSession.id)} className="sci-submit-btn bg-cyan" disabled={sessionContextLoading} style={{ height: '28px', fontSize: '10px' }}>
+                              {sessionContextLoading ? '加载中...' : '恢复上下文'}
+                            </button>
+                            <button type="button" onClick={() => handleDeleteSession(selectedSession.id)} className="sci-submit-btn" style={{ background: 'rgba(244,63,94,0.15)', color: 'hsl(var(--color-red))', height: '28px', fontSize: '10px' }}>
+                              删除
+                            </button>
+                          </div>
+                          {sessionContext && (
+                            <div style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(0,242,254,0.1)', borderRadius: '6px', padding: '10px', fontSize: '10.5px', fontFamily: 'var(--font-mono)', maxHeight: '150px', overflowY: 'auto', whiteSpace: 'pre-wrap', lineHeight: '1.5', color: '#e5e7eb' }}>
+                              {sessionContext}
+                            </div>
+                          )}
+                        </div>
+                      </GlassCard>
+
+                      <GlassCard title="关联记忆 (Linked Memories)" glowColor="purple" className="op-panel-card">
+                        <form onSubmit={handleLinkMemory} className="sci-form" style={{ marginBottom: '12px' }}>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <input type="text" value={linkMemoryId} onChange={(e) => setLinkMemoryId(e.target.value)} placeholder="输入记忆 ID 以关联..." className="sci-control-input" style={{ height: '30px', fontSize: '11px' }} required />
+                            <button type="submit" className="sci-submit-btn bg-cyan" style={{ height: '30px', fontSize: '10px', whiteSpace: 'nowrap', minWidth: '60px' }}>
+                              关联
+                            </button>
+                          </div>
+                        </form>
+                        {sessionMemories.length === 0 ? (
+                          <div className="search-empty-banner font-mono" style={{ padding: '15px', fontSize: '10px' }}>[ NO_LINKED // 暂无关联记忆 ]</div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '200px', overflowY: 'auto' }}>
+                            {sessionMemories.map((m) => (
+                              <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', background: 'rgba(0,0,0,0.2)', borderRadius: '4px', fontFamily: 'var(--font-mono)', fontSize: '10px', border: '1px solid rgba(255,255,255,0.04)' }}>
+                                <div style={{ flex: 1, overflow: 'hidden' }}>
+                                  <div style={{ color: 'hsl(var(--color-cyan))', fontSize: '9px', marginBottom: '2px' }}>{m.id?.substring(0, 12)}...</div>
+                                  <div style={{ color: 'hsl(var(--text-muted))', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.content?.substring(0, 60)}</div>
+                                </div>
+                                <button type="button" onClick={() => handleUnlinkMemory(m.id)} style={{ background: 'transparent', border: '1px solid rgba(244,63,94,0.3)', color: 'hsl(var(--color-red))', borderRadius: '3px', padding: '2px 8px', fontSize: '9px', cursor: 'pointer', fontFamily: 'var(--font-mono)' }}>
+                                  解除
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </GlassCard>
+                    </>
+                  ) : (
+                    <GlassCard title="会话详情 (Session Detail)" glowColor="purple" className="op-panel-card">
+                      <div className="search-empty-banner font-mono" style={{ padding: '30px' }}>[ SELECT_SESSION // 请从左侧列表中选择一个会话 ]</div>
+                    </GlassCard>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* TAB 6: DECAY / FORGET (遗忘衰减) */}
+        {activeTab === 'decay' && (
+          <div className="tab-view-content fade-in-view ingest-tab-layout">
+            {activeNamespace === 'all' ? (
+              <div style={{ display: 'flex', justifyContent: 'center', padding: '40px', width: '100%' }}>
+                <GlassCard title="系统提示 // SYSTEM NOTICE" glowColor="purple" className="op-panel-card" style={{ maxWidth: '600px', width: '100%' }}>
+                  <div style={{ padding: '20px', textAlign: 'center', fontFamily: 'var(--font-mono)' }}>
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ color: 'hsl(var(--color-purple))', margin: '0 auto 16px', display: 'block' }}>
+                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01" />
+                    </svg>
+                    <div style={{ fontSize: '14px', fontWeight: 'bold', color: 'white', marginBottom: '8px' }}>请选择特定的命名空间</div>
+                    <div style={{ fontSize: '12px', color: 'hsl(var(--text-muted))', lineHeight: '1.6' }}>
+                      主动遗忘和命名空间保护需要指定特定的命名空间。请在左侧或导航面板中选择具体的命名空间。
+                    </div>
+                  </div>
+                </GlassCard>
+              </div>
+            ) : (
+              <>
+                <div className="ingest-column">
+                  <GlassCard title="主动遗忘 (Active Forgetting)" glowColor="cyan" className="op-panel-card">
+                    <div style={{ padding: '10px 0', fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'hsl(var(--text-muted))', lineHeight: '1.6', borderBottom: '1px dashed rgba(0,242,254,0.15)', marginBottom: '14px' }}>
+                      按容量上限淘汰低分、未置顶的记忆。系统将按照重要性评分排序，保留高分和置顶记忆，淘汰超出容量的低分记忆。
+                    </div>
+                    <form onSubmit={handleActiveForgetting} className="sci-form">
+                      <div className="form-group-sci">
+                        <label>目标命名空间</label>
+                        <input type="text" value={activeNamespace} className="sci-control-input" disabled style={{ opacity: 0.6 }} />
+                      </div>
+                      <div className="form-group-sci">
+                        <div className="slider-label-row">
+                          <label>容量上限 (Max Capacity)</label>
+                          <span className="slider-val text-cyan font-mono">{forgetCapacity.toLocaleString()}</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="100"
+                          max="50000"
+                          step="100"
+                          value={forgetCapacity}
+                          onChange={(e) => setForgetCapacity(parseInt(e.target.value))}
+                          className="sci-slider"
+                        />
+                        <div className="input-helper-text font-mono" style={{ fontSize: '10px', color: 'hsl(var(--text-muted))', marginTop: '2px' }}>
+                          超过此数量的低分记忆将被淘汰
+                        </div>
+                      </div>
+                      <button type="submit" className="sci-submit-btn" disabled={forgetLoading} style={{ background: 'rgba(244,63,94,0.15)', color: 'hsl(var(--color-red))' }}>
+                        {forgetLoading ? '执行中...' : '执行主动遗忘'}
+                      </button>
+                      {forgetResult && (
+                        <div className="sci-success-banner" style={{ background: forgetResult.deleted_count > 0 ? 'rgba(244,63,94,0.08)' : 'rgba(74,222,128,0.08)', color: forgetResult.deleted_count > 0 ? 'hsl(var(--color-red))' : 'hsl(var(--color-green))' }}>
+                          [ FORGET_DONE // 淘汰了 {forgetResult.deleted_count} 条低分记忆，命名空间: {forgetResult.namespace} ]
+                        </div>
+                      )}
+                    </form>
+                  </GlassCard>
+
+                  <GlassCard title="当前命名空间状态" glowColor="purple" className="op-panel-card">
+                    <div className="sci-form font-mono" style={{ fontSize: '11px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                        <div style={{ padding: '10px', background: 'rgba(0,0,0,0.3)', borderRadius: '4px', textAlign: 'center' }}>
+                          <div style={{ color: 'hsl(var(--text-muted))', fontSize: '9px' }}>总记忆数</div>
+                          <div style={{ color: 'hsl(var(--color-cyan))', fontSize: '18px', fontWeight: 'bold' }}>{stats.total_chunks}</div>
+                        </div>
+                        <div style={{ padding: '10px', background: 'rgba(0,0,0,0.3)', borderRadius: '4px', textAlign: 'center' }}>
+                          <div style={{ color: 'hsl(var(--text-muted))', fontSize: '9px' }}>容量上限</div>
+                          <div style={{ color: 'hsl(var(--color-purple))', fontSize: '18px', fontWeight: 'bold' }}>{forgetCapacity.toLocaleString()}</div>
+                        </div>
+                      </div>
+                      <div style={{ marginTop: '8px', padding: '8px', background: 'rgba(0,0,0,0.2)', borderRadius: '4px', color: stats.total_chunks > forgetCapacity ? 'hsl(var(--color-red))' : 'hsl(var(--color-green))', textAlign: 'center' }}>
+                        {stats.total_chunks > forgetCapacity
+                          ? `[ WARNING // 超出容量 ${stats.total_chunks - forgetCapacity} 条，建议执行遗忘 ]`
+                          : `[ OK // 容量充足，无需遗忘 ]`}
+                      </div>
+                    </div>
+                  </GlassCard>
+                </div>
+
+                <div className="ingest-column">
+                  <GlassCard title="命名空间保护 (Namespace Protection)" glowColor="cyan" className="op-panel-card">
+                    <div style={{ padding: '10px 0', fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'hsl(var(--text-muted))', lineHeight: '1.6', borderBottom: '1px dashed rgba(0,242,254,0.15)', marginBottom: '14px' }}>
+                      受保护的命名空间变为只读，禁止写入和删除操作。适用于保护重要数据不被误操作。
+                    </div>
+                    <form onSubmit={handleProtectNamespace} className="sci-form" style={{ marginBottom: '14px' }}>
+                      <div className="form-group-sci">
+                        <label>保护命名空间</label>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <select
+                            value={protectTargetNs}
+                            onChange={(e) => setProtectTargetNs(e.target.value)}
+                            className="sci-control-select"
+                            style={{ flex: 1 }}
+                          >
+                            <option value="">-- 选择命名空间 --</option>
+                            {namespaces.map((ns) => (
+                              <option key={ns} value={ns}>{ns}</option>
+                            ))}
+                          </select>
+                          <button type="submit" className="sci-submit-btn bg-cyan" disabled={protectLoading || !protectTargetNs} style={{ height: '34px', fontSize: '10px', whiteSpace: 'nowrap' }}>
+                            {protectLoading ? '...' : '锁定'}
+                          </button>
+                        </div>
+                      </div>
+                    </form>
+                    {protectedNamespaces.length === 0 ? (
+                      <div className="search-empty-banner font-mono" style={{ padding: '15px', fontSize: '10px' }}>[ NO_PROTECTED // 暂无受保护的命名空间 ]</div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ fontSize: '10px', color: 'hsl(var(--text-muted))', fontFamily: 'var(--font-mono)', marginBottom: '4px' }}>
+                          受保护的命名空间 ({protectedNamespaces.length}):
+                        </div>
+                        {protectedNamespaces.map((ns) => (
+                          <div key={ns} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'rgba(255,187,0,0.05)', border: '1px solid rgba(255,187,0,0.15)', borderRadius: '4px', fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
+                            <span>
+                              <span style={{ color: 'hsl(var(--color-cyan))' }}>🔒</span>
+                              <span style={{ marginLeft: '6px' }}>{ns}</span>
+                            </span>
+                            <button type="button" onClick={() => handleUnprotectNamespace(ns)} style={{ background: 'transparent', border: '1px solid rgba(244,63,94,0.3)', color: 'hsl(var(--color-red))', borderRadius: '3px', padding: '2px 8px', fontSize: '9px', cursor: 'pointer', fontFamily: 'var(--font-mono)' }}>
+                              解锁
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </GlassCard>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* TAB 7: KNOWLEDGE_GALAXY (星系图谱) */}
+        {activeTab === 'graph' && (
+          <div className="tab-view-content fade-in-view" style={{ width: '100%', height: '100%' }}>
+            <KnowledgeGraph />
+          </div>
+        )}
+
         </div>
       </div>
 
@@ -1571,10 +2102,12 @@ export default function SPAHomepage() {
           visibility: visible;
         }
 
-        /* Search / Ingest / Memory Tabs Layout Swap */
+        /* Search / Ingest / Memory / Sessions / Decay Tabs Layout Swap */
         .cockpit-layout-grid.active-tab-search .system-left-panel,
         .cockpit-layout-grid.active-tab-ingest .system-left-panel,
-        .cockpit-layout-grid.active-tab-memory .system-left-panel {
+        .cockpit-layout-grid.active-tab-memory .system-left-panel,
+        .cockpit-layout-grid.active-tab-sessions .system-left-panel,
+        .cockpit-layout-grid.active-tab-decay .system-left-panel {
           left: -340px;
           opacity: 0;
           visibility: hidden;
@@ -1582,16 +2115,70 @@ export default function SPAHomepage() {
 
         .cockpit-layout-grid.active-tab-search .avatar-center-panel,
         .cockpit-layout-grid.active-tab-ingest .avatar-center-panel,
-        .cockpit-layout-grid.active-tab-memory .avatar-center-panel {
+        .cockpit-layout-grid.active-tab-memory .avatar-center-panel,
+        .cockpit-layout-grid.active-tab-sessions .avatar-center-panel,
+        .cockpit-layout-grid.active-tab-decay .avatar-center-panel {
           left: 0;
           width: 320px;
         }
 
         .cockpit-layout-grid.active-tab-search .operations-right-panel,
         .cockpit-layout-grid.active-tab-ingest .operations-right-panel,
-        .cockpit-layout-grid.active-tab-memory .operations-right-panel {
+        .cockpit-layout-grid.active-tab-memory .operations-right-panel,
+        .cockpit-layout-grid.active-tab-sessions .operations-right-panel,
+        .cockpit-layout-grid.active-tab-decay .operations-right-panel {
           left: 344px;
           width: calc(100% - 320px - 24px);
+        }
+
+        /* Graph Tab Layout Overrides (Only Graph tab is modified!) */
+        .cockpit-layout-grid.active-tab-graph .system-left-panel {
+          left: -340px;
+          opacity: 0;
+          visibility: hidden;
+        }
+
+        .cockpit-layout-grid.active-tab-graph .avatar-center-panel {
+          position: absolute;
+          left: 20px;
+          bottom: 20px;
+          top: auto;
+          z-index: 10;
+          pointer-events: none;
+          transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+        }
+
+        .cockpit-layout-grid.active-tab-graph .avatar-center-panel.graph-avatar-collapsed {
+          width: 38px;
+          height: 38px;
+          border-radius: 50%;
+          border: 1px solid hsl(var(--color-cyan));
+          background: rgba(8, 7, 5, 0.9);
+          box-shadow: 0 0 10px rgba(0, 242, 254, 0.25);
+          overflow: hidden;
+          pointer-events: auto;
+          cursor: pointer;
+        }
+
+        .cockpit-layout-grid.active-tab-graph .avatar-center-panel.graph-avatar-expanded {
+          width: 75px;
+          height: 75px;
+          border-radius: 8px;
+          border: 1.5px solid hsl(var(--color-cyan));
+          background: rgba(8, 7, 5, 0.85);
+          box-shadow: 0 0 15px rgba(0, 242, 254, 0.35);
+          overflow: hidden;
+          pointer-events: auto;
+          cursor: pointer;
+        }
+
+        .cockpit-layout-grid.active-tab-graph .operations-right-panel {
+          left: 0;
+          right: 0;
+          width: 100%;
+          height: calc(100vh - var(--header-height) - 60px);
+          padding-right: 0;
+          overflow: hidden;
         }
 
         /* Left column panel */

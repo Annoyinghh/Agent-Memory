@@ -15,6 +15,14 @@ export default function Header() {
         return '知识检索控制台 (Hybrid Search)';
       case 'ingest':
         return '知识注入与快照 (Knowledge Ingestion)';
+      case 'memory':
+        return '分层记忆体总览 (Layered Memory)';
+      case 'graph':
+        return '星系知识图谱 (Knowledge Galaxy)';
+      case 'sessions':
+        return '全息会话隔离 (Session Isolation)';
+      case 'decay':
+        return '记忆衰减与遗忘 (Decay & Forgetting)';
       default:
         return '控制台 (Dashboard)';
     }

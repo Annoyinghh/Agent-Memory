@@ -20,6 +20,7 @@ echo.
 echo [*] Configuring environment variables...
 set PYTHONIOENCODING=utf-8
 set NODE_ENV=development
+set PROTECTED_NAMESPACES=test
 
 echo [*] Starting Local Memory API Server (Port: 8900)...
 :: Start backend in the background of this terminal

@@ -6,7 +6,7 @@ import { useApp } from '@/context/AppContext';
 
 export default function DigitalAvatar() {
   const containerRef = useRef(null);
-  const { lastEvent, stats, avatarMuted } = useApp();
+  const { lastEvent, stats, avatarMuted, activeTab, isGraphAvatarExpanded, setIsGraphAvatarExpanded } = useApp();
   
   const [subtitle, setSubtitle] = useState('');
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -1079,7 +1079,10 @@ export default function DigitalAvatar() {
         renderer.setSize(w, h);
 
         // Zoom out when avatar shrinks to narrow column in Search/Ingest tabs
-        if (w < 450) {
+        // Zoom out even further when shrunk to a tiny icon/avatar on Graph tab
+        if (w < 100) {
+          targetCameraZ = 12.0;
+        } else if (w < 450) {
           targetCameraZ = 6.2;
         } else {
           targetCameraZ = 4.2;
@@ -1108,7 +1111,15 @@ export default function DigitalAvatar() {
   }, []);
 
   return (
-    <div className="avatar-panel">
+    <div 
+      className={`avatar-panel ${activeTab === 'graph' ? (isGraphAvatarExpanded ? 'graph-expanded' : 'graph-collapsed') : ''}`}
+      onClick={() => {
+        if (activeTab === 'graph') {
+          setIsGraphAvatarExpanded(!isGraphAvatarExpanded);
+        }
+      }}
+      style={{ cursor: activeTab === 'graph' ? 'pointer' : 'default' }}
+    >
       <div className="scanner-line"></div>
       
       {/* Symmetrical Sci-fi corner brackets inside panels */}
@@ -1119,12 +1130,33 @@ export default function DigitalAvatar() {
       <div ref={containerRef} className="canvas-container" />
 
       {/* Subtitles / Console Logs Display */}
-      <div className="console-wrapper">
+      <div className="console-wrapper" onClick={(e) => e.stopPropagation()}>
         <div className="terminal-header">
           <span className="dot dot-red"></span>
           <span className="dot dot-yellow"></span>
           <span className="dot dot-green"></span>
           <span className="console-label font-mono">NEURAL_AUDIO_FEED // SYS_OK</span>
+          {activeTab === 'graph' && isGraphAvatarExpanded && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setIsGraphAvatarExpanded(false); }}
+              style={{
+                background: 'transparent',
+                border: '1px solid rgba(244,63,94,0.4)',
+                color: 'hsl(var(--color-red))',
+                borderRadius: '3px',
+                padding: '0 6px',
+                fontSize: '12px',
+                lineHeight: '18px',
+                cursor: 'pointer',
+                fontFamily: 'var(--font-mono)',
+                marginLeft: '8px',
+                flexShrink: 0,
+              }}
+            >
+              ×
+            </button>
+          )}
           <div className="speaker-wave-holder">
             {isSpeaking && (
               <div className="soundwave-container">
@@ -1224,6 +1256,17 @@ export default function DigitalAvatar() {
           margin-top: auto;
         }
 
+        .avatar-panel.graph-collapsed .sci-corner,
+        .avatar-panel.graph-collapsed .scanner-line {
+          display: none;
+        }
+
+        .avatar-panel.graph-collapsed {
+          padding: 0;
+          border-radius: 50%;
+          justify-content: center;
+        }
+
         .console-wrapper:hover {
           opacity: 1.0;
         }
@@ -1249,6 +1292,46 @@ export default function DigitalAvatar() {
           white-space: pre-wrap;
           word-break: break-all;
           text-shadow: 0 0 8px rgba(255, 187, 0, 0.35);
+        }
+
+        /* Graph tab specific styling */
+        .avatar-panel.graph-collapsed .console-wrapper {
+          opacity: 0 !important;
+          pointer-events: none !important;
+          transform: translateY(10px) scale(0.95);
+          display: none !important;
+        }
+
+        .avatar-panel.graph-expanded .console-wrapper {
+          position: absolute !important;
+          left: 85px !important;
+          bottom: 0 !important;
+          width: 280px !important;
+          max-width: 50vw !important;
+          background: rgba(8, 7, 5, 0.92) !important;
+          border: 1px solid hsl(var(--color-cyan)) !important;
+          box-shadow: 0 0 15px rgba(0, 242, 254, 0.25) !important;
+          border-radius: 8px !important;
+          padding: 8px 12px !important;
+          margin-top: 0 !important;
+          opacity: 1 !important;
+          pointer-events: auto !important;
+          transform: translateY(0) scale(1) !important;
+          display: block !important;
+          z-index: 11 !important;
+        }
+
+        .avatar-panel.graph-expanded .console-wrapper::before {
+          content: "" !important;
+          position: absolute !important;
+          left: -6px !important;
+          bottom: 22px !important;
+          width: 10px !important;
+          height: 10px !important;
+          background: rgba(8, 7, 5, 0.92) !important;
+          border-left: 1px solid hsl(var(--color-cyan)) !important;
+          border-bottom: 1px solid hsl(var(--color-cyan)) !important;
+          transform: rotate(45deg) !important;
         }
       `}</style>
     </div>
