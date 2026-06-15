@@ -24,10 +24,19 @@ class MemoryItem(BaseModel):
     score: float = 1.0
 
 class MemoryEngine:
-    def __init__(self, db_dir: str = "./data"):
+    # Anchor default data dir to THIS file's location so every entry point
+    # (REST API, MCP server, CLI) reads/writes the SAME database regardless of cwd.
+    _DEFAULT_DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+
+    def __init__(self, db_dir: str = None):
+        # Only accept absolute paths verbatim. Any relative path (incl. "./data")
+        # is treated as a bare filename and resolved against the engine's own dir,
+        # so a stray empty data/ can never be created or read from the wrong cwd.
+        if db_dir is None or not os.path.isabs(db_dir):
+            db_dir = self._DEFAULT_DB_DIR
         self.lock = threading.RLock()
         os.makedirs(db_dir, exist_ok=True)
-        
+
         # 1. Initialize SQLite (FTS5 + Metadata)
         self.sqlite_path = os.path.join(db_dir, "memory_metadata.db")
         self.conn = sqlite3.connect(self.sqlite_path, check_same_thread=False)
@@ -830,6 +839,77 @@ Conversation:
         return {"nodes": node_count, "edges": edge_count, "relation_types": relation_types}
 
     @db_lock
+    def project_overview(self) -> Dict[str, Any]:
+        """Return a one-shot overview of every namespace so an AI agent can
+        identify the project without spelunking the filesystem.
+
+        Per namespace: node/edge counts, dominant source types (code vs dialog),
+        sample content, and an estimated token cost to pack the whole namespace.
+        Token estimate uses the 1 token ≈ 4 chars heuristic already used by
+        pack_context.
+        """
+        # Aggregate per-namespace stats + total content length in one pass.
+        self.cursor.execute(
+            '''SELECT namespace,
+                      COUNT(*) AS nodes,
+                      COALESCE(SUM(LENGTH(content)), 0) AS chars,
+                      COALESCE(SUM(CASE WHEN source LIKE 'graphify%' THEN 1 ELSE 0 END), 0) AS code_nodes
+               FROM memory_fts
+               GROUP BY namespace
+               ORDER BY nodes DESC'''
+        )
+        namespaces = []
+        total_nodes = 0
+        total_edges = 0
+        total_chars = 0
+
+        for ns, node_count, chars, code_nodes in self.cursor.fetchall():
+            # Edge count for this namespace (join via from_id).
+            self.cursor.execute(
+                '''SELECT count(*) FROM memory_edges e
+                   JOIN memory_fts m ON e.from_id = m.id
+                   WHERE m.namespace = ?''', (ns,)
+            )
+            edge_count = self.cursor.fetchone()[0]
+
+            # Dominant type heuristic.
+            if code_nodes >= node_count * 0.5:
+                kind = "codebase"
+            elif code_nodes == 0:
+                kind = "dialog"
+            else:
+                kind = "mixed"
+
+            # One representative sample (highest access or most recent).
+            self.cursor.execute(
+                '''SELECT content FROM memory_fts WHERE namespace = ?
+                   ORDER BY timestamp DESC LIMIT 1''', (ns,)
+            )
+            sample_row = self.cursor.fetchone()
+            sample = (sample_row[0][:120] + "...") if sample_row and sample_row[0] else ""
+
+            namespaces.append({
+                "namespace": ns,
+                "nodes": node_count,
+                "edges": edge_count,
+                "type": kind,
+                "estimated_tokens": (chars or 0) // 4,
+                "sample": sample,
+            })
+            total_nodes += node_count
+            total_edges += edge_count
+            total_chars += chars or 0
+
+        return {
+            "total_namespaces": len(namespaces),
+            "total_nodes": total_nodes,
+            "total_edges": total_edges,
+            "estimated_tokens_all": total_chars // 4,
+            "note": "Call this once to identify the project; then use hybrid_search/pack_context with a specific namespace.",
+            "namespaces": namespaces,
+        }
+
+    @db_lock
     def get_graph_data(self, namespace: str, limit: int = 500) -> Dict[str, Any]:
         """Get nodes and edges for graph visualization, capped at limit nodes.
 
@@ -885,52 +965,141 @@ Conversation:
             
         if not node_ids:
             return {"nodes": [], "edges": []}
-            
-        self.cursor.execute("SELECT from_id, to_id, relation_type, confidence FROM memory_edges")
-        all_edges = self.cursor.fetchall()
-        
+
+        # Optimized edge query: only fetch edges where both endpoints are in our node set
+        # Use SQL IN clause instead of fetching all edges and filtering in Python
+        placeholders = ",".join(["?"] * len(node_id_list))
+        self.cursor.execute(
+            f'''SELECT from_id, to_id, relation_type, confidence
+                FROM memory_edges
+                WHERE from_id IN ({placeholders}) AND to_id IN ({placeholders})''',
+            node_id_list + node_id_list
+        )
+
         edges = []
-        for e in all_edges:
+        for e in self.cursor.fetchall():
             from_id, to_id, relation_type, confidence = e
-            if from_id in node_ids and to_id in node_ids:
-                edges.append({
-                    "source": from_id,
-                    "target": to_id,
-                    "relation": relation_type,
-                    "confidence": confidence
-                })
-                
+            edges.append({
+                "source": from_id,
+                "target": to_id,
+                "relation": relation_type,
+                "confidence": confidence
+            })
+
         return {"nodes": nodes, "edges": edges}
 
     @db_lock
-    def import_graph_data(self, nodes: List[Dict], edges: List[Dict], namespace: str) -> Dict[str, int]:
+    def import_graph_data(self, nodes: List[Dict], edges: List[Dict], namespace: str, progress_callback=None) -> Dict[str, int]:
         """Batch import graph nodes (as memories) and edges from Graphify output.
 
         Detects communities via networkx Louvain so the visualization can color
         nodes by cluster. Stores Graphify provenance (source location, file type)
         in graph_nodes so code entities can be filtered out of regular memory search.
+
+        progress_callback: optional function(stage, current, total, message) for progress updates
         """
         import uuid
         id_map = {}
         node_count = 0
         edge_count = 0
 
-        # 1. Insert nodes as memories and build external->internal id map
-        for node in nodes:
+        def report_progress(stage, current, total, message):
+            if progress_callback:
+                progress_callback(stage, current, total, message)
+
+        # 1. Insert nodes as memories in bulk and build external->internal id map
+        import time
+        current_time = int(time.time())
+        memory_fts_data = []
+        memory_stats_data = []
+        chroma_documents = []
+        chroma_metadatas = []
+        chroma_ids = []
+
+        report_progress("prepare", 0, len(nodes), "准备节点数据...")
+
+        for idx, node in enumerate(nodes):
             doc_id = str(uuid.uuid4())
-            external_id = node.get("id", "")
-            label = node.get("label", "")
-            content = node.get("content", label)
+            external_id = node.get("id") or ""
+            label = node.get("label") or ""
+            content = node.get("content") or label or "empty_content"
+
+            if not isinstance(content, str) or not content.strip():
+                content = "empty_content"
+
             source_file = node.get("source_file", "unknown")
             file_type = node.get("file_type", "code")
             source = f"graphify:{source_file}:{file_type}"
 
-            self.insert_memory(doc_id, namespace, content, source)
+            memory_fts_data.append((doc_id, namespace, content, source, current_time))
+            memory_stats_data.append((doc_id,))
+
+            chroma_documents.append(content)
+            chroma_metadatas.append({"namespace": namespace, "source": source, "timestamp": current_time})
+            chroma_ids.append(doc_id)
+
             if external_id:
                 id_map[external_id] = doc_id
             node_count += 1
 
+            # Report progress every 10% or every 100 nodes
+            if (idx + 1) % max(1, len(nodes) // 10) == 0 or (idx + 1) % 100 == 0:
+                report_progress("prepare", idx + 1, len(nodes), f"已准备 {idx + 1}/{len(nodes)} 个节点")
+
+        report_progress("prepare", len(nodes), len(nodes), "节点数据准备完成")
+        report_progress("sqlite", 0, len(nodes), "写入 SQLite...")
+
+        if memory_fts_data:
+            self.cursor.executemany(
+                "INSERT INTO memory_fts (id, namespace, content, source, timestamp) VALUES (?, ?, ?, ?, ?)",
+                memory_fts_data
+            )
+            self.cursor.executemany(
+                "INSERT OR IGNORE INTO memory_stats (id, access_count, is_pinned) VALUES (?, 0, 0)",
+                memory_stats_data
+            )
+            self.conn.commit()
+
+        report_progress("sqlite", len(nodes), len(nodes), "SQLite 写入完成")
+        report_progress("chroma", 0, len(chroma_ids), "开始向量化写入 ChromaDB...")
+
+        if chroma_ids:
+            # Split into batches to provide progress updates and avoid timeout
+            batch_size = 50  # Reduced from 100 to 50 for more frequent updates
+            total_batches = (len(chroma_ids) + batch_size - 1) // batch_size
+
+            try:
+                for batch_idx in range(0, len(chroma_ids), batch_size):
+                    batch_end = min(batch_idx + batch_size, len(chroma_ids))
+                    batch_docs = chroma_documents[batch_idx:batch_end]
+                    batch_metas = chroma_metadatas[batch_idx:batch_end]
+                    batch_ids = chroma_ids[batch_idx:batch_end]
+
+                    self.collection.add(
+                        documents=batch_docs,
+                        metadatas=batch_metas,
+                        ids=batch_ids
+                    )
+
+                    # Report progress after each batch
+                    report_progress("chroma", batch_end, len(chroma_ids), f"向量化进度 {batch_end}/{len(chroma_ids)}")
+
+                report_progress("chroma", len(chroma_ids), len(chroma_ids), "ChromaDB 批量写入成功")
+            except Exception as e:
+                import sys
+                print(f"Error adding to ChromaDB in bulk: {e}", file=sys.stderr)
+                report_progress("chroma_fallback", 0, len(chroma_ids), "批量写入失败，切换为逐条写入...")
+                for idx, (doc, meta, cid) in enumerate(zip(chroma_documents, chroma_metadatas, chroma_ids)):
+                    try:
+                        self.collection.add(documents=[doc], metadatas=[meta], ids=[cid])
+                        if (idx + 1) % max(1, len(chroma_ids) // 20) == 0:
+                            report_progress("chroma_fallback", idx + 1, len(chroma_ids), f"已写入 {idx + 1}/{len(chroma_ids)} 个向量")
+                    except Exception as ex:
+                        pass
+                report_progress("chroma_fallback", len(chroma_ids), len(chroma_ids), "ChromaDB 逐条写入完成")
+
         # 2. Resolve edges to internal ids, dedup before DB write
+        report_progress("edges", 0, len(edges), "解析边关系...")
         resolved_edges = []
         for edge in edges:
             from_external = edge.get("source", "")
@@ -940,11 +1109,16 @@ Conversation:
             if from_id and to_id:
                 resolved_edges.append((from_id, to_id, edge.get("relation", "unknown"), edge.get("confidence", 1.0)))
 
+        report_progress("edges", len(edges), len(edges), f"已解析 {len(resolved_edges)} 条有效边")
+
         # 3. Community detection via networkx Louvain (fallback to trivial partition)
+        report_progress("community", 0, 100, "检测社区结构...")
         community_map = self._detect_communities(resolved_edges)
+        report_progress("community", 100, 100, f"检测到 {len(set(community_map.values())) if community_map else 0} 个社区")
 
         # 4. Persist node metadata + community assignment
-        for node in nodes:
+        report_progress("metadata", 0, len(nodes), "写入节点元数据...")
+        for idx, node in enumerate(nodes):
             external_id = node.get("id", "")
             doc_id = id_map.get(external_id)
             if not doc_id:
@@ -963,14 +1137,19 @@ Conversation:
                     external_id,
                 ),
             )
-            edge_count_added = 0
 
         self.conn.commit()
+        report_progress("metadata", len(nodes), len(nodes), "节点元数据写入完成")
 
         # 5. Persist edges
-        for from_id, to_id, relation, confidence in resolved_edges:
+        report_progress("persist_edges", 0, len(resolved_edges), "持久化边关系...")
+        for idx, (from_id, to_id, relation, confidence) in enumerate(resolved_edges):
             self.add_edge(from_id, to_id, relation, confidence)
             edge_count += 1
+            if (idx + 1) % max(1, len(resolved_edges) // 10) == 0:
+                report_progress("persist_edges", idx + 1, len(resolved_edges), f"已写入 {idx + 1}/{len(resolved_edges)} 条边")
+
+        report_progress("persist_edges", len(resolved_edges), len(resolved_edges), "边关系持久化完成")
 
         return {
             "nodes_imported": node_count,

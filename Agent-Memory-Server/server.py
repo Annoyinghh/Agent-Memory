@@ -379,6 +379,20 @@ def graph_stats(namespace: str = None) -> str:
     return json.dumps(stats, indent=2, ensure_ascii=False)
 
 @mcp.tool()
+def project_overview() -> str:
+    """
+    ONE-SHOT project identification. Call this FIRST to discover what's in the
+    memory database instead of searching the filesystem for the db file.
+
+    Returns every namespace with its node/edge counts, type (codebase/dialog/mixed),
+    an estimated token cost to load it, and a sample node. Use this to pick the
+    right namespace, then call hybrid_search or pack_context for the details.
+    No arguments needed.
+    """
+    overview = engine.project_overview()
+    return json.dumps(overview, indent=2, ensure_ascii=False)
+
+@mcp.tool()
 def import_graph(nodes: str, edges: str, namespace: str) -> str:
     """
     Import a batch of nodes and edges into the knowledge graph.
