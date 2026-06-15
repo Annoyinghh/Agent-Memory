@@ -481,6 +481,31 @@ export const api = {
     request(`/api/graph/data?namespace=${encodeURIComponent(namespace)}&limit=${limit}`, { method: 'GET' }),
 
   /**
+   * List detected communities for cluster coloring / filtering
+   * @param {string|null} [namespace]
+   * @returns {Promise<{namespace: string|null, communities: Array<{community_id:number,node_count:number,type_count:number}>}>}
+   */
+  getCommunities: (namespace = null) => {
+    const url = namespace
+      ? `/api/graph/communities?namespace=${encodeURIComponent(namespace)}`
+      : '/api/graph/communities';
+    return request(url, { method: 'GET' });
+  },
+
+  /**
+   * Semantic search scoped to graph nodes only (excludes dialog memories)
+   * @param {string} namespace
+   * @param {string} query
+   * @param {number} [topK=10]
+   * @returns {Promise<{query,namespace,total,results:Array}>}
+   */
+  searchGraph: (namespace, query, topK = 10) =>
+    request('/api/graph/search', {
+      method: 'POST',
+      body: JSON.stringify({ namespace, query, top_k: topK }),
+    }),
+
+  /**
    * Batch import graph data (nodes + edges)
    * @param {string} namespace
    * @param {Array} nodes

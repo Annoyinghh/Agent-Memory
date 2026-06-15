@@ -7,6 +7,7 @@ __pycache__/
 
 # Data
 Agent-Memory-Server/data/
+Agent-Memory-Server/graphify-out/
 
 # Node
 Agent-memory-ui/node_modules/

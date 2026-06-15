@@ -110,6 +110,22 @@ class MemoryEngine:
         ''')
         self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_edges_from ON memory_edges(from_id)')
         self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_edges_to ON memory_edges(to_id)')
+        # Graph node metadata table: distinguishes code entities from dialog memories
+        # and stores Graphify provenance (source location, file type, community).
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS graph_nodes (
+                id TEXT PRIMARY KEY,
+                node_type TEXT,
+                source_file TEXT,
+                source_location TEXT,
+                file_type TEXT,
+                community_id INTEGER,
+                external_id TEXT
+            )
+        ''')
+        self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_graph_nodes_type ON graph_nodes(node_type)')
+        self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_graph_nodes_community ON graph_nodes(community_id)')
+        self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_graph_nodes_external ON graph_nodes(external_id)')
         self.conn.commit()
 
     def insert_memory(self, doc_id: str, namespace: str, content: str, source: str, dedup_threshold: float = 0.0) -> str:
@@ -776,12 +792,35 @@ Conversation:
         return {"nodes": node_count, "edges": edge_count, "relation_types": relation_types}
 
     def get_graph_data(self, namespace: str, limit: int = 500) -> Dict[str, Any]:
-        """Get nodes and edges for graph visualization, capped at limit nodes."""
+        """Get nodes and edges for graph visualization, capped at limit nodes.
+
+        Joins graph_nodes metadata so the frontend can color nodes by community
+        and edges by relation type.
+        """
         if namespace == "all":
             self.cursor.execute("SELECT id, namespace, content, source, timestamp FROM memory_fts LIMIT ?", (limit,))
         else:
             self.cursor.execute("SELECT id, namespace, content, source, timestamp FROM memory_fts WHERE namespace = ? LIMIT ?", (namespace, limit))
         rows = self.cursor.fetchall()
+
+        # Pre-fetch metadata for all returned ids in one query to avoid N+1
+        node_id_list = [r[0] for r in rows]
+        meta_map: Dict[str, Dict] = {}
+        if node_id_list:
+            placeholders = ",".join(["?"] * len(node_id_list))
+            self.cursor.execute(
+                f'''SELECT id, node_type, source_file, source_location, file_type, community_id
+                    FROM graph_nodes WHERE id IN ({placeholders})''',
+                node_id_list,
+            )
+            for mrow in self.cursor.fetchall():
+                meta_map[mrow[0]] = {
+                    "node_type": mrow[1],
+                    "source_file": mrow[2],
+                    "source_location": mrow[3],
+                    "file_type": mrow[4],
+                    "community_id": mrow[5],
+                }
 
         nodes = []
         node_ids = set()
@@ -789,6 +828,7 @@ Conversation:
             node_id = r[0]
             node_ids.add(node_id)
             stats = self._get_stats(node_id)
+            meta = meta_map.get(node_id, {})
             nodes.append({
                 "id": node_id,
                 "namespace": r[1],
@@ -796,7 +836,12 @@ Conversation:
                 "source": r[3],
                 "timestamp": int(r[4]) if r[4] else 0,
                 "access_count": stats["access_count"],
-                "is_pinned": bool(stats["is_pinned"])
+                "is_pinned": bool(stats["is_pinned"]),
+                "node_type": meta.get("node_type"),
+                "source_file": meta.get("source_file"),
+                "source_location": meta.get("source_location"),
+                "file_type": meta.get("file_type"),
+                "community_id": meta.get("community_id"),
             })
             
         if not node_ids:
@@ -819,35 +864,159 @@ Conversation:
         return {"nodes": nodes, "edges": edges}
 
     def import_graph_data(self, nodes: List[Dict], edges: List[Dict], namespace: str) -> Dict[str, int]:
-        """Batch import graph nodes (as memories) and edges from Graphify output."""
+        """Batch import graph nodes (as memories) and edges from Graphify output.
+
+        Detects communities via networkx Louvain so the visualization can color
+        nodes by cluster. Stores Graphify provenance (source location, file type)
+        in graph_nodes so code entities can be filtered out of regular memory search.
+        """
         import uuid
         id_map = {}
         node_count = 0
         edge_count = 0
 
+        # 1. Insert nodes as memories and build external->internal id map
         for node in nodes:
             doc_id = str(uuid.uuid4())
             external_id = node.get("id", "")
             label = node.get("label", "")
             content = node.get("content", label)
-            source = f"graphify:{node.get('source_file', 'unknown')}:{node.get('file_type', 'code')}"
+            source_file = node.get("source_file", "unknown")
+            file_type = node.get("file_type", "code")
+            source = f"graphify:{source_file}:{file_type}"
 
             self.insert_memory(doc_id, namespace, content, source)
             if external_id:
                 id_map[external_id] = doc_id
             node_count += 1
 
+        # 2. Resolve edges to internal ids, dedup before DB write
+        resolved_edges = []
         for edge in edges:
             from_external = edge.get("source", "")
             to_external = edge.get("target", "")
             from_id = id_map.get(from_external)
             to_id = id_map.get(to_external)
             if from_id and to_id:
-                self.add_edge(
-                    from_id, to_id,
-                    edge.get("relation", "unknown"),
-                    edge.get("confidence", 1.0)
-                )
-                edge_count += 1
+                resolved_edges.append((from_id, to_id, edge.get("relation", "unknown"), edge.get("confidence", 1.0)))
 
-        return {"nodes_imported": node_count, "edges_imported": edge_count, "id_map_size": len(id_map)}
+        # 3. Community detection via networkx Louvain (fallback to trivial partition)
+        community_map = self._detect_communities(resolved_edges)
+
+        # 4. Persist node metadata + community assignment
+        for node in nodes:
+            external_id = node.get("id", "")
+            doc_id = id_map.get(external_id)
+            if not doc_id:
+                continue
+            self.cursor.execute(
+                '''INSERT OR REPLACE INTO graph_nodes
+                   (id, node_type, source_file, source_location, file_type, community_id, external_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                (
+                    doc_id,
+                    node.get("node_type") or self._infer_node_type(node),
+                    node.get("source_file", "unknown"),
+                    node.get("source_location", ""),
+                    node.get("file_type", "code"),
+                    community_map.get(doc_id, 0),
+                    external_id,
+                ),
+            )
+            edge_count_added = 0
+
+        self.conn.commit()
+
+        # 5. Persist edges
+        for from_id, to_id, relation, confidence in resolved_edges:
+            self.add_edge(from_id, to_id, relation, confidence)
+            edge_count += 1
+
+        return {
+            "nodes_imported": node_count,
+            "edges_imported": edge_count,
+            "id_map_size": len(id_map),
+            "communities": len(set(community_map.values())) if community_map else 0,
+        }
+
+    @staticmethod
+    def _infer_node_type(node: Dict) -> str:
+        """Infer a coarse node_type from Graphify provenance when none is given."""
+        ft = (node.get("file_type") or "").lower()
+        if ft in ("document", "doc", "markdown", "md"):
+            return "document"
+        if ft == "rationale":
+            return "rationale"
+        label = (node.get("label") or "").lower()
+        if label.endswith("()") or "(" in label:
+            return "function"
+        if "class " in label:
+            return "class"
+        if label.endswith(".py") or label.endswith(".js") or label.endswith(".ts"):
+            return "file"
+        return "symbol"
+
+    @staticmethod
+    def _detect_communities(resolved_edges: List[tuple]) -> Dict[str, int]:
+        """Run Louvain community detection on resolved edges (networkx optional)."""
+        if not resolved_edges:
+            return {}
+        try:
+            import networkx as nx
+            try:
+                from networkx.algorithms.community import louvain_communities
+            except ImportError:
+                return {}
+            g = nx.Graph()
+            for f, t, _r, _c in resolved_edges:
+                g.add_edge(f, t)
+            communities = louvain_communities(g, seed=42)
+            return {nid: idx for idx, comm in enumerate(communities) for nid in comm}
+        except Exception as exc:
+            print(f"[graph] community detection skipped: {exc}", file=sys.stderr)
+            return {}
+
+    def get_graph_node_meta(self, doc_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch graph_nodes metadata row for a given memory id."""
+        self.cursor.execute(
+            '''SELECT node_type, source_file, source_location, file_type, community_id, external_id
+               FROM graph_nodes WHERE id = ?''',
+            (doc_id,),
+        )
+        row = self.cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "node_type": row[0],
+            "source_file": row[1],
+            "source_location": row[2],
+            "file_type": row[3],
+            "community_id": row[4],
+            "external_id": row[5],
+        }
+
+    def list_communities(self, namespace: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Aggregate community_id -> {node_count, edge_count, top_relations}."""
+        if namespace:
+            self.cursor.execute(
+                '''SELECT gn.community_id, COUNT(*) as n,
+                          COUNT(DISTINCT gn.node_type) as type_count
+                   FROM graph_nodes gn
+                   JOIN memory_fts m ON gn.id = m.id
+                   WHERE m.namespace = ? AND gn.community_id IS NOT NULL
+                   GROUP BY gn.community_id
+                   ORDER BY n DESC''',
+                (namespace,),
+            )
+        else:
+            self.cursor.execute(
+                '''SELECT community_id, COUNT(*) as n, COUNT(DISTINCT node_type) as type_count
+                   FROM graph_nodes
+                   WHERE community_id IS NOT NULL
+                   GROUP BY community_id
+                   ORDER BY n DESC''',
+            )
+        out = []
+        for row in self.cursor.fetchall():
+            out.append({"community_id": row[0], "node_count": row[1], "type_count": row[2]})
+        return out

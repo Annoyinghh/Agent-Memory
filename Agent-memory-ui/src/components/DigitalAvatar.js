@@ -19,6 +19,17 @@ export default function DigitalAvatar() {
   const synthRef = useRef(null);
   const utteranceRef = useRef(null);
   const hasSpokenFirstTimeRef = useRef(false);
+  
+  const activeTabRef = useRef(activeTab);
+  const isGraphAvatarExpandedRef = useRef(isGraphAvatarExpanded);
+
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  useEffect(() => {
+    isGraphAvatarExpandedRef.current = isGraphAvatarExpanded;
+  }, [isGraphAvatarExpanded]);
 
   // Helper to sync speaking status from both audio speech and typewriter typing
   const updateSpeakingState = () => {
@@ -246,10 +257,11 @@ export default function DigitalAvatar() {
 
   // Three.js 3D Loaded Holographic Head implementation
   useEffect(() => {
-    if (!containerRef.current) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-    const width = containerRef.current.clientWidth;
-    const height = containerRef.current.clientHeight;
+    const width = container.clientWidth;
+    const height = container.clientHeight;
 
     const scene = new THREE.Scene();
     
@@ -260,7 +272,7 @@ export default function DigitalAvatar() {
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    containerRef.current.appendChild(renderer.domElement);
+    container.appendChild(renderer.domElement);
 
     // Particle texture
     const canvas = document.createElement('canvas');
@@ -278,8 +290,8 @@ export default function DigitalAvatar() {
     // Track mouse relative coordinates
     const mouse = { x: 0, y: 0 };
     const handleMouseMove = (event) => {
-      if (!containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
       mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     };
@@ -902,17 +914,20 @@ export default function DigitalAvatar() {
         isGlitching = false;
       }
 
+      // Check if avatar is in shrunken/collapsed mode on graph tab
+      const isCollapsed = activeTabRef.current === 'graph';
+
       // Idle floating breath translations and rotations
-      const floatOffsetY = Math.sin(time * 1.2) * 0.04;
-      const floatTiltX = Math.sin(time * 0.6) * 0.02;
-      const floatTiltZ = Math.cos(time * 0.8) * 0.02;
+      const floatOffsetY = isCollapsed ? 0 : Math.sin(time * 1.2) * 0.04;
+      const floatTiltX = isCollapsed ? 0 : Math.sin(time * 0.6) * 0.02;
+      const floatTiltZ = isCollapsed ? 0 : Math.cos(time * 0.8) * 0.02;
 
       // Interact with mouse occasionally (natural glance breathing)
       // Oscillate glance interest between 0.0 (focused forward) and 1.0 (looking at mouse)
-      const glanceWeight = Math.max(0.0, Math.sin(time * 0.3) * 0.8 + 0.2); 
-      const targetRotX = -mouse.y * 0.25 * glanceWeight + floatTiltX;
-      const targetRotY = mouse.x * 0.30 * glanceWeight;
-      const targetRotZ = floatTiltZ;
+      const glanceWeight = isCollapsed ? 0 : Math.max(0.0, Math.sin(time * 0.3) * 0.8 + 0.2); 
+      const targetRotX = isCollapsed ? 0 : -mouse.y * 0.25 * glanceWeight + floatTiltX;
+      const targetRotY = isCollapsed ? 0 : mouse.x * 0.30 * glanceWeight;
+      const targetRotZ = isCollapsed ? 0 : floatTiltZ;
 
       const lerpSpeed = 0.035; // slower, natural, weighted look-at rotation
 
@@ -1070,9 +1085,9 @@ export default function DigitalAvatar() {
     const resizeObserver = new ResizeObserver((entries) => {
       for (let entry of entries) {
         // Use clientWidth/Height of container for exact rendering bounds
-        if (!containerRef.current) continue;
-        const w = containerRef.current.clientWidth;
-        const h = containerRef.current.clientHeight;
+        if (!container) continue;
+        const w = container.clientWidth;
+        const h = container.clientHeight;
         if (w === 0 || h === 0) continue;
         camera.aspect = w / h;
         camera.updateProjectionMatrix();
@@ -1081,7 +1096,7 @@ export default function DigitalAvatar() {
         // Zoom out when avatar shrinks to narrow column in Search/Ingest tabs
         // Zoom out even further when shrunk to a tiny icon/avatar on Graph tab
         if (w < 100) {
-          targetCameraZ = 12.0;
+          targetCameraZ = 5.0;
         } else if (w < 450) {
           targetCameraZ = 6.2;
         } else {
@@ -1090,18 +1105,24 @@ export default function DigitalAvatar() {
       }
     });
 
-    if (containerRef.current) {
-      resizeObserver.observe(containerRef.current);
+    if (container) {
+      resizeObserver.observe(container);
     }
 
     return () => {
       resizeObserver.disconnect();
       window.removeEventListener('mousemove', handleMouseMove);
       cancelAnimationFrame(animId);
-      if (containerRef.current && renderer.domElement) {
-        containerRef.current.removeChild(renderer.domElement);
+      if (container && renderer.domElement) {
+        try {
+          container.removeChild(renderer.domElement);
+        } catch (e) {
+          // ignore already removed
+        }
       }
       
+      // Dispose WebGL resources to prevent context leaks
+      renderer.dispose();
       if (headGeometry) headGeometry.dispose();
       texture.dispose();
       if (headPoints) headPoints.material.dispose();

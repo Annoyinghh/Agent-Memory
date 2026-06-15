@@ -712,7 +712,7 @@ export default function SPAHomepage() {
   };
 
   return (
-    <div className="cockpit-container">
+    <div className={`cockpit-container ${activeTab === 'graph' ? 'graph-mode' : ''}`}>
       <div className={`cockpit-layout-grid active-tab-${activeTab}`}>
         
         {/* ============================================================ */}
@@ -2056,6 +2056,194 @@ export default function SPAHomepage() {
           </div>
         )}
 
+        {/* TAB 8: TUTORIAL (使用教程) */}
+        {activeTab === 'tutorial' && (
+          <div className="tab-view-content fade-in-view tutorial-tab-layout" style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', paddingBottom: '30px' }}>
+            <GlassCard title="AGENT MEMORY 使用手册 // SYSTEM MANUAL" glowColor="cyan" className="op-panel-card">
+              <div className="manual-header-sci">
+                <div className="decor-bar"></div>
+                <div className="title-text font-mono">[ MANUAL_RELOAD // AGENT_MEM_SYS_V2.6 ]</div>
+                <div className="sub-desc">
+                  本手册提供 Agent Memory 系统的核心架构、操作指南以及常见工作流介绍，助您快速管理外部 AI 记忆上下文。
+                </div>
+              </div>
+            </GlassCard>
+
+            {/* Function Overview Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 2fr', gap: '20px' }}>
+              {/* Left side: Navigation / Table of Contents */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                <GlassCard title="系统界面总览 (INTERFACE OVERVIEW)" glowColor="purple" className="op-panel-card">
+                  <div style={{ padding: '6px' }} className="font-mono">
+                    <table className="sci-mini-table">
+                      <thead>
+                        <tr>
+                          <th>标签页</th>
+                          <th>核心用途</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td className="text-cyan">🔍 检索</td>
+                          <td>搜语义 / 打包上下文</td>
+                        </tr>
+                        <tr>
+                          <td className="text-cyan">➕ 写入</td>
+                          <td>手动添加长期记忆</td>
+                        </tr>
+                        <tr>
+                          <td className="text-cyan">🧠 记忆层级</td>
+                          <td>短期 / 工作 / 长期管理</td>
+                        </tr>
+                        <tr>
+                          <td className="text-cyan">🗂️ 会话</td>
+                          <td>创建、关联、归档会话</td>
+                        </tr>
+                        <tr>
+                          <td className="text-cyan">🗑️ 遗忘</td>
+                          <td>主动清理与命名空间保护</td>
+                        </tr>
+                        <tr>
+                          <td className="text-cyan">🌌 知识图谱</td>
+                          <td>代码 AST 可视化与关系导航</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <div className="sci-note-text" style={{ marginTop: '14px' }}>
+                      💡 中央全息人头会响应每个操作给出反馈。右上切换器决定当前库（默认 default，all 跨库检索）。
+                    </div>
+                  </div>
+                </GlassCard>
+
+                <GlassCard title="快速工作流索引 (QUICK WORKFLOWS)" glowColor="cyan" className="op-panel-card">
+                  <div className="font-mono" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '4px' }}>
+                    <div className="workflow-link-item">
+                      <span className="bullet">⚡</span>
+                      <div className="wf-body">
+                        <span className="title text-white">会议纪要导入</span>
+                        <span className="desc">切到「写入」→ 填入来源标签 → 贴入文本并写入</span>
+                      </div>
+                    </div>
+                    <div className="workflow-link-item">
+                      <span className="bullet">⚡</span>
+                      <div className="wf-body">
+                        <span className="title text-white">新项目调研会话</span>
+                        <span className="desc">「会话」建新会话 → 「检索」结果点「+ 会话」关联</span>
+                      </div>
+                    </div>
+                    <div className="workflow-link-item">
+                      <span className="bullet">⚡</span>
+                      <div className="wf-body">
+                        <span className="title text-white">代码库分析</span>
+                        <span className="desc">「知识图谱」→ 「提取代码库」→ 填入绝对路径</span>
+                      </div>
+                    </div>
+                    <div className="workflow-link-item">
+                      <span className="bullet">⚡</span>
+                      <div className="wf-body">
+                        <span className="title text-white">记忆库防爆裁剪</span>
+                        <span className="desc">「遗忘」设保护库 → 执行最大容量裁剪</span>
+                      </div>
+                    </div>
+                  </div>
+                </GlassCard>
+              </div>
+
+              {/* Right side: Detailed Feature Manual */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                <GlassCard title="核心功能详解 (DETAILED OPERATIONS)" glowColor="cyan" className="op-panel-card">
+                  <div className="manual-scroll-area scrollbar-thin" style={{ maxHeight: '530px', overflowY: 'auto', paddingRight: '6px' }}>
+                    
+                    {/* Section 1 */}
+                    <div className="manual-section">
+                      <h3 className="text-cyan font-mono">1. 知识检索 (Search System)</h3>
+                      <p className="font-mono">提供两种高阶检索与打包子模式：</p>
+                      <ul className="font-mono">
+                        <li><strong>语义检索 (Semantic)</strong>：输入中文/英文查询，滑块设定召回数 Top-K。召回结果可即时编辑、删除，或复制单条 LLM 格式化提示词。</li>
+                        <li><strong>上下文打包 (Pack)</strong>：输入搜索词并设置最大 Token 预算（例如 2000）。系统按关联度智能去重排序，自动裁切拼装出最匹配的上下文，一键复制即可粘贴使用。</li>
+                      </ul>
+                    </div>
+
+                    {/* Section 2 */}
+                    <div className="manual-section">
+                      <h3 className="text-cyan font-mono">2. 数据写入 (Ingest System)</h3>
+                      <p className="font-mono">将任意原始文本转换为长期记忆：</p>
+                      <ul className="font-mono">
+                        <li><strong>命名空间</strong>：目标存放库（自动读取当前选择）。</li>
+                        <li><strong>来源标签 (Source)</strong>：如 <code>meeting-2026-06</code>，用于后续追踪与按源批量清理。</li>
+                        <li><strong>去重阈值</strong>：0~1 浮点数。若写入内容与已有记忆的相似度高于此阈值，系统会自动合并或覆盖，防止存储冗余（设为 0 关闭去重）。</li>
+                      </ul>
+                    </div>
+
+                    {/* Section 3 */}
+                    <div className="manual-section">
+                      <h3 className="text-cyan font-mono">3. 记忆层级 (Memory Layers)</h3>
+                      <p className="font-mono">模拟人类大脑的短期、工作和长期记忆层：</p>
+                      <ul className="font-mono">
+                        <li><strong>短期记忆 (Dialog Buffer)</strong>：自动缓存最近一两轮对话。可手动精炼，提炼出关键点写入长期记忆中。</li>
+                        <li><strong>工作记忆 (Scratchpad)</strong>：以键值对 (KeyValue) 方式保存系统/用户定义的变量（如 <code>current_project = shipbear</code>）。浏览器关闭后依然留存，除非手动清空。</li>
+                        <li><strong>长期记忆 (Long-term DB)</strong>：固化后的向量与 FTS5 记录。支持 📌 钉住操作，被钉住的记忆将永不被遗忘或裁剪机制删除。</li>
+                      </ul>
+                    </div>
+
+                    {/* Section 4 */}
+                    <div className="manual-section">
+                      <h3 className="text-cyan font-mono">4. 会话管理 (Sessions)</h3>
+                      <p className="font-mono">多源记忆逻辑归集与现场重置方案：</p>
+                      <ul className="font-mono">
+                        <li>新建会话并命名。在「检索」页中搜索到关键事实时，点击 <code>+ 会话</code> 将其塞入会话包。</li>
+                        <li>切回会话管理页，点击 <code>恢复上下文</code> 即可一次性打包会话内的全部关联事实，恢复原项目工作区环境。</li>
+                        <li>支持 active / archived / closed 状态转换，防止垃圾会话干扰。</li>
+                      </ul>
+                    </div>
+
+                    {/* Section 5 */}
+                    <div className="manual-section">
+                      <h3 className="text-cyan font-mono">5. 主动遗忘与裁剪 (Decay & Protected)</h3>
+                      <p className="font-mono">通过自动能量衰减模型与白名单防灾：</p>
+                      <ul className="font-mono">
+                        <li><strong>容量裁剪 (Decay)</strong>：设定最大 Chunk 数量上限（如 10000），系统按「访问最少 + 时间最旧」规则物理清理未置顶的超额节点。</li>
+                        <li><strong>命名空间保护 (Protected)</strong>：将重要库（如 <code>core-persona</code> / <code>critical-rules</code>）设为 Protected。保护库对所有删除、清空、裁剪操作免疫，绝对安全。</li>
+                      </ul>
+                    </div>
+
+                    {/* Section 6 */}
+                    <div className="manual-section" style={{ borderBottom: 'none' }}>
+                      <h3 className="text-cyan font-mono">6. 知识图谱 (Galaxy Graph)</h3>
+                      <p className="font-mono">基于 AST 语法树的代码全局结构可视化：</p>
+                      <ul className="font-mono">
+                        <li><strong>代码提取</strong>：点击 <code>📂 提取代码库</code> 填入本地代码库绝对路径，Graphify 将利用 Tree-Sitter 语法解析符号、依赖、函数并直接导入图谱。</li>
+                        <li><strong>离线导入</strong>：点击 <code>📥 导入 graph.json</code> 填入离线 JSON 文件路径，快速复原 AST 节点。</li>
+                        <li><strong>拓扑寻路</strong>：在两颗星体之间查询最短调用路径（Max Depth: 5），路径以亮绿色线条发光高亮展示。</li>
+                        <li><strong>社区划分</strong>：同种颜色的星体簇代表通过 Louvain 网络社团算法自动聚类的逻辑相关代码块。</li>
+                        <li><strong>关系颜色对照</strong>：<br/>
+                          <span style={{ color: '#00f2fe' }}>■ calls (青色)</span> | {' '}
+                          <span style={{ color: '#ffbb00' }}>■ contains (橙色)</span> | {' '}
+                          <span style={{ color: '#10b981' }}>■ imports (绿色)</span> | {' '}
+                          <span style={{ color: '#a855f7' }}>■ inherits (紫色)</span> | {' '}
+                          <span style={{ color: '#9ca3af' }}>■ references (灰色)</span>
+                        </li>
+                      </ul>
+                    </div>
+
+                  </div>
+                </GlassCard>
+
+                <GlassCard title="系统接口与外部连接 (API & MCP CONNECT)" glowColor="purple" className="op-panel-card">
+                  <div className="font-mono" style={{ padding: '6px', fontSize: '11px', lineHeight: '1.6' }}>
+                    <p>Agent Memory REST 后端服务器在本地持续运行：</p>
+                    <ul style={{ paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <li>后端接口基准地址：<code className="text-cyan">http://127.0.0.1:8900</code></li>
+                      <li>交互式 Swagger 接口文档：<a href="http://127.0.0.1:8900/docs" target="_blank" rel="noreferrer" className="text-cyan" style={{ textDecoration: 'underline' }}>http://127.0.0.1:8900/docs</a></li>
+                      <li>MCP (Model Context Protocol) 协议接口：脚本文件位于 <code className="text-white">Agent-Memory-Server/server.py</code>，支持 Claude Code 等 Agent 零距离直连。</li>
+                    </ul>
+                  </div>
+                </GlassCard>
+              </div>
+            </div>
+          </div>
+        )}
+
         </div>
       </div>
 
@@ -2064,6 +2252,13 @@ export default function SPAHomepage() {
           max-width: 1400px;
           margin: 0 auto;
           position: relative;
+        }
+
+        .cockpit-container.graph-mode {
+          max-width: none;
+          width: 100%;
+          margin: 0;
+          padding: 0;
         }
 
         .cockpit-layout-grid {
@@ -2102,12 +2297,13 @@ export default function SPAHomepage() {
           visibility: visible;
         }
 
-        /* Search / Ingest / Memory / Sessions / Decay Tabs Layout Swap */
+        /* Search / Ingest / Memory / Sessions / Decay / Tutorial Tabs Layout Swap */
         .cockpit-layout-grid.active-tab-search .system-left-panel,
         .cockpit-layout-grid.active-tab-ingest .system-left-panel,
         .cockpit-layout-grid.active-tab-memory .system-left-panel,
         .cockpit-layout-grid.active-tab-sessions .system-left-panel,
-        .cockpit-layout-grid.active-tab-decay .system-left-panel {
+        .cockpit-layout-grid.active-tab-decay .system-left-panel,
+        .cockpit-layout-grid.active-tab-tutorial .system-left-panel {
           left: -340px;
           opacity: 0;
           visibility: hidden;
@@ -2117,7 +2313,8 @@ export default function SPAHomepage() {
         .cockpit-layout-grid.active-tab-ingest .avatar-center-panel,
         .cockpit-layout-grid.active-tab-memory .avatar-center-panel,
         .cockpit-layout-grid.active-tab-sessions .avatar-center-panel,
-        .cockpit-layout-grid.active-tab-decay .avatar-center-panel {
+        .cockpit-layout-grid.active-tab-decay .avatar-center-panel,
+        .cockpit-layout-grid.active-tab-tutorial .avatar-center-panel {
           left: 0;
           width: 320px;
         }
@@ -2126,7 +2323,8 @@ export default function SPAHomepage() {
         .cockpit-layout-grid.active-tab-ingest .operations-right-panel,
         .cockpit-layout-grid.active-tab-memory .operations-right-panel,
         .cockpit-layout-grid.active-tab-sessions .operations-right-panel,
-        .cockpit-layout-grid.active-tab-decay .operations-right-panel {
+        .cockpit-layout-grid.active-tab-decay .operations-right-panel,
+        .cockpit-layout-grid.active-tab-tutorial .operations-right-panel {
           left: 344px;
           width: calc(100% - 320px - 24px);
         }
@@ -3427,6 +3625,140 @@ export default function SPAHomepage() {
         .consolidation-panel {
           display: flex;
           flex-direction: column;
+        }
+
+        /* Tutorial / User Manual styling */
+        .manual-header-sci {
+          position: relative;
+          padding: 8px 0;
+          font-family: var(--font-mono);
+        }
+        
+        .manual-header-sci .decor-bar {
+          height: 2px;
+          background: linear-gradient(90deg, hsl(var(--color-cyan)), transparent);
+          margin-bottom: 12px;
+        }
+
+        .manual-header-sci .title-text {
+          font-size: 14px;
+          color: hsl(var(--color-cyan));
+          font-weight: bold;
+          margin-bottom: 8px;
+        }
+
+        .manual-header-sci .sub-desc {
+          font-size: 11px;
+          color: hsl(var(--text-muted));
+          line-height: 1.6;
+        }
+
+        .sci-mini-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 11px;
+          text-align: left;
+        }
+
+        .sci-mini-table th, .sci-mini-table td {
+          padding: 8px 6px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        .sci-mini-table th {
+          color: hsl(var(--text-muted));
+          font-weight: bold;
+          font-size: 9px;
+          text-transform: uppercase;
+        }
+
+        .sci-mini-table td {
+          color: hsl(var(--text-primary));
+        }
+
+        .sci-note-text {
+          font-size: 10px;
+          color: hsl(var(--color-purple));
+          line-height: 1.5;
+          padding: 8px;
+          background: rgba(168, 85, 247, 0.05);
+          border-left: 2px solid hsl(var(--color-purple));
+          border-radius: 2px;
+        }
+
+        .workflow-link-item {
+          display: flex;
+          gap: 10px;
+          padding: 8px;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 187, 0, 0.08);
+          border-radius: 4px;
+          transition: all 0.2s ease;
+        }
+
+        .workflow-link-item:hover {
+          border-color: hsl(var(--color-cyan));
+          background: rgba(0, 242, 254, 0.03);
+        }
+
+        .workflow-link-item .bullet {
+          color: hsl(var(--color-cyan));
+          font-size: 12px;
+        }
+
+        .workflow-link-item .wf-body {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .workflow-link-item .wf-body .title {
+          font-size: 11px;
+          font-weight: bold;
+        }
+
+        .workflow-link-item .wf-body .desc {
+          font-size: 9px;
+          color: hsl(var(--text-muted));
+        }
+
+        .manual-section {
+          padding: 10px 0 16px;
+          border-bottom: 1px dashed rgba(255, 255, 255, 0.06);
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .manual-section h3 {
+          font-size: 12px;
+          font-weight: bold;
+          margin: 0;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .manual-section p {
+          font-size: 11px;
+          color: hsl(var(--text-primary));
+          margin: 0;
+          line-height: 1.5;
+        }
+
+        .manual-section ul {
+          margin: 0;
+          padding-left: 18px;
+          font-size: 11px;
+          color: hsl(var(--text-muted));
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          line-height: 1.5;
+        }
+
+        .manual-section ul li strong {
+          color: hsl(var(--text-primary));
         }
       `}</style>
     </div>

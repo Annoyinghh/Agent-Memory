@@ -584,6 +584,36 @@ def get_graph_data(namespace: str = Query("all"), limit: int = Query(500)):
     """Get nodes and edges for graph visualization, capped at limit nodes."""
     return engine.get_graph_data(namespace, limit)
 
+
+@app.get("/api/graph/communities")
+def list_communities(namespace: Optional[str] = Query(None)):
+    """List detected communities with node counts for cluster coloring / filtering."""
+    return {"namespace": namespace, "communities": engine.list_communities(namespace)}
+
+
+@app.post("/api/graph/search")
+def search_graph_nodes(req: SearchRequest):
+    """Semantic search scoped to graph nodes only — excludes dialog memories."""
+    results = engine.hybrid_search(req.namespace, req.query, req.top_k)
+    # Keep only nodes that have a graph_nodes metadata row (i.e. code entities)
+    filtered = []
+    for r in results:
+        meta = engine.get_graph_node_meta(r.id)
+        if meta:
+            filtered.append({
+                "id": r.id,
+                "namespace": r.namespace,
+                "content": r.content,
+                "source": r.source,
+                "timestamp": r.timestamp,
+                "score": r.score,
+                "node_type": meta["node_type"],
+                "source_file": meta["source_file"],
+                "source_location": meta["source_location"],
+                "community_id": meta["community_id"],
+            })
+    return {"query": req.query, "namespace": req.namespace, "total": len(filtered), "results": filtered}
+
 @app.post("/api/graph/import", response_model=GraphImportResponse)
 def import_graph_data(req: GraphImportRequest):
     _check_protected(req.namespace)
@@ -614,6 +644,14 @@ def import_graph_file(req: GraphFileImportRequest):
     from graphify_bridge import import_from_graph_json
     result = import_from_graph_json(req.graph_path, req.namespace, os.environ.get("MEMORY_DB_DIR", "./data"))
     return result
+
+class DebugLogRequest(BaseModel):
+    message: str
+
+@app.post("/api/debug-log")
+def debug_log(req: DebugLogRequest):
+    print(f"[BROWSER DEBUG] {req.message}", file=sys.stderr)
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":

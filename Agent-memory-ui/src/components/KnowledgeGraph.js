@@ -33,6 +33,32 @@ export default function KnowledgeGraph() {
   const [isLinking, setIsLinking] = useState(false);
   const [targetLinkId, setTargetLinkId] = useState('');
   const [relationType, setRelationType] = useState('related_to');
+
+  // GraphStats state
+  const [graphStats, setGraphStats] = useState({ nodes: 0, edges: 0, relation_types: [] });
+
+  // Extract Codebase States
+  const [showExtractInput, setShowExtractInput] = useState(false);
+  const [extractPath, setExtractPath] = useState('');
+  const [extracting, setExtracting] = useState(false);
+
+  // Import graph.json File States
+  const [showImportFileInput, setShowImportFileInput] = useState(false);
+  const [importFilePath, setImportFilePath] = useState('');
+  const [importingFile, setImportingFile] = useState(false);
+
+  // Orbit Control Dial State
+  const [showControlDial, setShowControlDial] = useState(false);
+
+  // Node details (neighbors)
+  const [nodeDetail, setNodeDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  // Pathfinder States
+  const [pathStartNode, setPathStartNode] = useState(null);
+  const [pathEndNode, setPathEndNode] = useState(null);
+  const [foundPath, setFoundPath] = useState(null);
+  const [pathLoading, setPathLoading] = useState(false);
   
   // Three.js References for clean animation updates
   const sceneRef = useRef(null);
@@ -64,6 +90,14 @@ export default function KnowledgeGraph() {
       nodeDataRef.current = res.nodes || [];
       setSelectedNode(null);
       setHoveredNode(null);
+      
+      // Fetch detailed stats
+      try {
+        const stats = await api.graphStats(activeNamespace);
+        setGraphStats(stats);
+      } catch (err) {
+        console.error('[KnowledgeGraph] Fetch stats failed:', err);
+      }
     } catch (err) {
       console.error('[KnowledgeGraph] Fetch failed:', err);
       setError('无法载入星系图谱，请检查 API 服务状态。');
@@ -75,6 +109,107 @@ export default function KnowledgeGraph() {
   useEffect(() => {
     fetchGraph();
   }, [activeNamespace]);
+
+  // Fetch node detail and neighbors when selectedNode changes
+  useEffect(() => {
+    if (!selectedNode?.id) {
+      setNodeDetail(null);
+      return;
+    }
+    const fetchDetail = async () => {
+      setDetailLoading(true);
+      try {
+        const detail = await api.getNodeDetail(selectedNode.id);
+        setNodeDetail(detail);
+      } catch (err) {
+        console.error('[KnowledgeGraph] Failed to fetch node detail:', err);
+      } finally {
+        setDetailLoading(false);
+      }
+    };
+    fetchDetail();
+  }, [selectedNode?.id]);
+
+  // Run Graphify extraction on codebase directory
+  const handleExtractCodebase = async () => {
+    if (!extractPath.trim()) return;
+    setExtracting(true);
+    try {
+      const res = await api.extractCodebase(extractPath.trim(), activeNamespace);
+      setLastEvent({
+        type: 'insert',
+        namespace: activeNamespace,
+        message: `代码库提取完成！导入了 ${res.nodes_imported || 0} 个节点，${res.edges_imported || 0} 条引力链路。`
+      });
+      alert(`提取成功！已导入 ${res.nodes_imported || 0} 个知识节点，${res.edges_imported || 0} 条关系链。`);
+      setShowExtractInput(false);
+      setExtractPath('');
+      fetchGraph();
+    } catch (err) {
+      console.error('[KnowledgeGraph] extractCodebase failed:', err);
+      alert(`提取失败: ${err.message || err}`);
+    } finally {
+      setExtracting(false);
+    }
+  };
+
+  // Import existing graphify graph.json file
+  const handleImportGraphFile = async () => {
+    if (!importFilePath.trim()) return;
+    setImportingFile(true);
+    try {
+      const res = await api.importGraphFile(importFilePath.trim(), activeNamespace);
+      setLastEvent({
+        type: 'insert',
+        namespace: activeNamespace,
+        message: `导入 graph.json 完成！导入了 ${res.nodes_imported || 0} 个节点，${res.edges_imported || 0} 条引力链路。`
+      });
+      alert(`导入成功！已导入 ${res.nodes_imported || 0} 个知识节点，${res.edges_imported || 0} 条关系链。`);
+      setShowImportFileInput(false);
+      setImportFilePath('');
+      fetchGraph();
+    } catch (err) {
+      console.error('[KnowledgeGraph] importGraphFile failed:', err);
+      alert(`导入失败: ${err.message || err}`);
+    } finally {
+      setImportingFile(false);
+    }
+  };
+
+  // Shortest Path Finder between two nodes
+  const handleFindPath = async () => {
+    if (!pathStartNode || !pathEndNode) return;
+    setPathLoading(true);
+    setFoundPath(null);
+    try {
+      const res = await api.findPath(pathStartNode.id, pathEndNode.id, 5);
+      if (res.found && res.path) {
+        setFoundPath(res.path);
+        
+        // Glide camera to the start node to begin visualization
+        const meshA = nodeMeshesRef.current?.find(m => m.userData.id === pathStartNode.id);
+        if (meshA) {
+          targetCamPosRef.current = new THREE.Vector3()
+            .copy(meshA.position)
+            .add(new THREE.Vector3(0, 2.2, 3.2));
+          targetLookAtRef.current.copy(meshA.position);
+        }
+      } else {
+        setFoundPath([]);
+      }
+    } catch (err) {
+      console.error('[KnowledgeGraph] findPath failed:', err);
+      alert(`查找路径失败: ${err.message || err}`);
+    } finally {
+      setPathLoading(false);
+    }
+  };
+
+  const handleClearPath = () => {
+    setPathStartNode(null);
+    setPathEndNode(null);
+    setFoundPath(null);
+  };
 
   // Handle Node Deletion
   const handleDeleteNode = async (nodeId) => {
@@ -139,11 +274,12 @@ export default function KnowledgeGraph() {
 
   // Core 3D Rendering Setup
   useEffect(() => {
-    if (!mountRef.current) return;
+    const container = mountRef.current;
+    if (!container) return;
 
     // 1. Initialize Scene & Camera
-    const width = mountRef.current.clientWidth;
-    const height = mountRef.current.clientHeight;
+    const width = container.clientWidth;
+    const height = container.clientHeight;
     
     const scene = new THREE.Scene();
     sceneRef.current = scene;
@@ -159,8 +295,41 @@ export default function KnowledgeGraph() {
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    mountRef.current.appendChild(renderer.domElement);
+    container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
+
+    try {
+      setTimeout(() => {
+        const parentElement = container?.parentElement;
+        const canvases = document.querySelectorAll('canvas');
+        const canvasInfo = Array.from(canvases).map(c => ({
+          className: c.className,
+          width: c.width,
+          height: c.height,
+          styleWidth: c.style.width,
+          styleHeight: c.style.height,
+          parentClassName: c.parentElement ? c.parentElement.className : null,
+          grandparentClassName: c.parentElement && c.parentElement.parentElement ? c.parentElement.parentElement.className : null,
+        }));
+        
+        const report = {
+          event: "canvases_debug",
+          mountWidth: container?.clientWidth,
+          mountHeight: container?.clientHeight,
+          parentWidth: parentElement ? parentElement.clientWidth : null,
+          parentHeight: parentElement ? parentElement.clientHeight : null,
+          parentClassName: parentElement ? parentElement.className : null,
+          windowWidth: typeof window !== 'undefined' ? window.innerWidth : null,
+          windowHeight: typeof window !== 'undefined' ? window.innerHeight : null,
+          canvases: canvasInfo
+        };
+        fetch('http://127.0.0.1:8920/', {
+          method: 'POST',
+          body: JSON.stringify(report),
+          headers: { 'Content-Type': 'application/json' }
+        }).catch(e => {});
+      }, 2000);
+    } catch (err) {}
 
     // 2. Add Lighting
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
@@ -248,17 +417,31 @@ export default function KnowledgeGraph() {
     // Resize Observer for robust container-level tracking
     const resizeObserver = new ResizeObserver((entries) => {
       for (let entry of entries) {
-        if (!mountRef.current || !camera || !renderer) continue;
-        const w = mountRef.current.clientWidth;
-        const h = mountRef.current.clientHeight;
+        if (!container || !camera || !renderer) continue;
+        const w = container.clientWidth;
+        const h = container.clientHeight;
+        
+        try {
+          const report = {
+            event: "resize",
+            w: w,
+            h: h
+          };
+          fetch('http://127.0.0.1:8920/', {
+            method: 'POST',
+            body: JSON.stringify(report),
+            headers: { 'Content-Type': 'application/json' }
+          }).catch(e => {});
+        } catch (err) {}
+
         if (w === 0 || h === 0) continue;
         camera.aspect = w / h;
         camera.updateProjectionMatrix();
         renderer.setSize(w, h);
       }
     });
-    if (mountRef.current) {
-      resizeObserver.observe(mountRef.current);
+    if (container) {
+      resizeObserver.observe(container);
     }
 
     // Mouse Move & Click Handlers for WebGL Canvas
@@ -297,20 +480,27 @@ export default function KnowledgeGraph() {
 
     return () => {
       resizeObserver.disconnect();
-      if (rendererRef.current && rendererRef.current.domElement) {
-        rendererRef.current.domElement.removeEventListener('mousemove', onMouseMove);
-        rendererRef.current.domElement.removeEventListener('click', onClick);
+      if (renderer.domElement) {
+        renderer.domElement.removeEventListener('mousemove', onMouseMove);
+        renderer.domElement.removeEventListener('click', onClick);
       }
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
-      if (mountRef.current && renderer.domElement) {
+      if (container && renderer.domElement) {
         try {
-          mountRef.current.removeChild(renderer.domElement);
+          container.removeChild(renderer.domElement);
         } catch (e) {
           // ignore already removed
         }
       }
+      // Dispose WebGL resources to prevent context leaks
+      starGeometry.dispose();
+      starMaterial.dispose();
+      starTexture.dispose();
+      coreGeo.dispose();
+      coreMat.dispose();
+      renderer.dispose();
     };
   }, []);
 
@@ -346,24 +536,98 @@ export default function KnowledgeGraph() {
     const { nodes, edges } = graphData;
     if (!nodes || nodes.length === 0) return;
 
+    // Setup shortest path node tracking
+    const pathNodeIds = new Set();
+    if (foundPath && foundPath.length > 0) {
+      foundPath.forEach(step => {
+        pathNodeIds.add(step.from);
+        pathNodeIds.add(step.to);
+      });
+    }
+
     // Filter nodes by query (highlight match)
     const normalizedQuery = searchQuery.toLowerCase().trim();
 
+    // 1. Draw Orbit Ring guides and place planet nodes
+    // Community palette: distinct hues per detected cluster, deterministic by id.
+    const COMMUNITY_PALETTE = [
+      0x00f2fe, 0xff6600, 0xffaa00, 0x8a2be2, 0x4ade80,
+      0xff4081, 0x00e676, 0x7c4dff, 0xffeb3b, 0x18ffff,
+      0xff5722, 0x3d5afe, 0xe91e63, 0x00bfa5, 0xffd600,
+    ];
+    const RELATION_PALETTE = {
+      contains: 0xff6600,
+      calls: 0x00f2fe,
+      imports: 0x4ade80,
+      imports_from: 0x4ade80,
+      inherits: 0xff4081,
+      references: 0xffeb3b,
+      method: 0xffaa00,
+      rationale_for: 0x8a2be2,
+      related_to: 0xcccccc,
+    };
+    const relationColorOf = (rel) => (RELATION_PALETTE[rel] || 0x18ffff) & 0xffffff;
+
+    // Group nodes by community_id so the layout forms natural clusters
+    const communityGroups = new Map();
+    nodes.forEach((node) => {
+      const cid = node.community_id != null ? node.community_id : -1;
+      if (!communityGroups.has(cid)) communityGroups.set(cid, []);
+      communityGroups.get(cid).push(node);
+    });
+    // Assign each community an angular sector around the galaxy core
+    const communitySectors = new Map();
+    const sectorCount = communityGroups.size || 1;
+    let sectorIdx = 0;
+    for (const cid of communityGroups.keys()) {
+      const sectorCenter = (sectorIdx / sectorCount) * Math.PI * 2;
+      communitySectors.set(cid, sectorCenter);
+      sectorIdx += 1;
+    }
+
     nodeMeshesRef.current = [];
     const idToMesh = {};
+    const nodeOrder = []; // preserve original index for solar layout fallback
 
-    // 1. Draw Orbit Ring guides and place planet nodes
     nodes.forEach((node, i) => {
-      // Calculate planet visual properties
+      nodeOrder.push(node);
       const isPinned = node.is_pinned;
-      const size = isPinned ? 0.35 : 0.16;
+      const nodeType = node.node_type;
       
-      // Node Color Scheme matching system (Cyber Gold for pinned/snapshots, Orange/Cyan/Silver for standard)
-      let color = 0x8a2be2; // Default orange/purple tint
-      if (isPinned) color = 0xffaa00; // Bright Gold
-      else if (node.source.includes('snapshot')) color = 0xff5500; // Orange snapshot
-      else if (node.source.includes('code')) color = 0x00f2fe; // Light cyan codebase node
-      else color = 0xcccccc; // Silver/White manual insertion
+      // Check if node is part of the shortest path
+      const isOnPath = pathNodeIds.has(node.id);
+      const isStart = pathStartNode?.id === node.id;
+      const isEnd = pathEndNode?.id === node.id;
+
+      // Size by node type: classes/files are larger than symbols/functions
+      const sizeByType =
+        nodeType === 'class' || nodeType === 'file' ? 0.28 :
+        nodeType === 'function' ? 0.18 :
+        nodeType === 'document' ? 0.22 :
+        0.16;
+      
+      let size = isPinned ? Math.max(0.35, sizeByType * 1.6) : sizeByType;
+      if (isOnPath) {
+        size = isStart || isEnd ? Math.max(size * 1.5, 0.45) : Math.max(size * 1.3, 0.35);
+      }
+
+      // Color: path nodes get distinct pathfinder colors, pinned wins next, then community palette, fallback by source
+      let color = 0x8a2be2;
+      if (isOnPath) {
+        if (isStart) color = 0x10b981; // Green for start A
+        else if (isEnd) color = 0xef4444; // Red for end B
+        else color = 0x00f2fe; // Cyan for path nodes
+      } else if (isPinned) {
+        color = 0xffaa00;
+      } else if (node.community_id != null) {
+        color = COMMUNITY_PALETTE[node.community_id % COMMUNITY_PALETTE.length];
+      } else if (node.source?.includes('snapshot')) {
+        color = 0xff5500;
+      } else if (node.source?.includes('code')) {
+        color = 0x00f2fe;
+      } else {
+        color = 0xcccccc;
+      }
 
       const geom = new THREE.SphereGeometry(size, 16, 16);
       
@@ -371,36 +635,49 @@ export default function KnowledgeGraph() {
       const mat = new THREE.MeshPhongMaterial({
         color: color,
         emissive: color,
-        emissiveIntensity: 0.15,
-        shininess: 90,
+        emissiveIntensity: isOnPath ? 0.6 : 0.15,
+        shininess: isOnPath ? 120 : 90,
         specular: 0xffffff
       });
 
       const mesh = new THREE.Mesh(geom, mat);
       
-      // Position calculation based on layout modes
+      // Position calculation: nodes cluster around their community sector center
+      // so visually-related code entities form coherent "star clusters" instead
+      // of a random scatter. Solar mode falls back to concentric orbits.
       let r = 0;
       let angle = 0;
       let y = 0;
+      const cid = node.community_id != null ? node.community_id : -1;
+      const sectorCenter = communitySectors.get(cid) ?? 0;
+      const groupArr = communityGroups.get(cid) || [node];
+      const inGroupIndex = groupArr.indexOf(node);
+      const groupSize = groupArr.length;
 
       if (layoutMode === 'galaxy') {
-        // Arrange in a dual logarithmic spiral arm galaxy
-        const armIndex = i % 2;
-        const normalizedIndex = i / nodes.length;
-        r = 1.0 + 5.0 * normalizedIndex + Math.random() * 0.15;
-        angle = normalizedIndex * Math.PI * 4 + (armIndex * Math.PI);
-        y = (Math.random() - 0.5) * 0.35 + (r * 0.05); // Thin disk thickness
+        // Sector width scales so larger communities span more arc.
+        // Each cluster sits in its own angular wedge of the disk.
+        const sectorWidth = (Math.PI * 2 / sectorCount) * 0.8;
+        const withinSector = groupSize > 1
+          ? (inGroupIndex / (groupSize - 1) - 0.5) * sectorWidth
+          : 0;
+        const baseAngle = sectorCenter + withinSector;
+        // Radial position inside the cluster, plus jitter for visual depth
+        const rBase = 1.6 + (groupSize > 1 ? (inGroupIndex % 4) * 0.7 : 0) + Math.random() * 0.5;
+        r = rBase;
+        angle = baseAngle;
+        y = (Math.random() - 0.5) * 0.4 + (r * 0.04);
       } else {
-        // Arrange in concentric circular solar system orbits
+        // Solar: concentric circular orbits, community-agnostic
         const numConcentricOrbits = Math.max(3, Math.ceil(nodes.length / 4));
         const orbitIndex = i % numConcentricOrbits;
         r = 1.3 + (4.5 * (orbitIndex / numConcentricOrbits)) + (Math.random() * 0.1);
-        angle = (i * (Math.PI * 2 / 5)) + (Math.random() * 0.15); // Disperse around orbit track
+        angle = (i * (Math.PI * 2 / 5)) + (Math.random() * 0.15);
         y = (Math.random() - 0.5) * 0.08;
       }
 
       mesh.position.set(Math.cos(angle) * r, y, Math.sin(angle) * r);
-      
+
       // Cache coordinates and properties for Keplerian orbital animation
       mesh.userData = {
         id: node.id,
@@ -410,6 +687,10 @@ export default function KnowledgeGraph() {
         timestamp: node.timestamp,
         access_count: node.access_count,
         is_pinned: isPinned,
+        node_type: nodeType,
+        community_id: node.community_id,
+        source_file: node.source_file,
+        source_location: node.source_location,
         orbitRadius: r,
         orbitAngle: angle,
         orbitSpeed: (0.16 + Math.random() * 0.08) / Math.sqrt(r), // Kepler's speed drop-off
@@ -450,26 +731,36 @@ export default function KnowledgeGraph() {
         targetMesh.position
       ]);
 
-      // Glowing cyan laser link lines
+      // Check if this edge is on the shortest path
+      const isEdgeOnPath = foundPath?.some(step => 
+        (step.from === edge.source && step.to === edge.target) ||
+        (step.from === edge.target && step.to === edge.source)
+      );
+
+      // Edge color reflects relation type, path edges are high contrast green
+      const edgeColor = isEdgeOnPath ? 0x10b981 : relationColorOf(edge.relation);
       const lineMat = new THREE.LineBasicMaterial({
-        color: 0x00f2fe,
+        color: edgeColor,
         transparent: true,
-        opacity: 0.16 + (edge.confidence * 0.2),
+        opacity: isEdgeOnPath ? 1.0 : (0.14 + (edge.confidence * 0.18)),
         blending: THREE.AdditiveBlending
       });
 
       const line = new THREE.Line(lineGeo, lineMat);
-      
+
       // Store references to dynamically update links as nodes revolve
       line.userData = {
         sourceId: edge.source,
-        targetId: edge.target
+        targetId: edge.target,
+        relation: edge.relation,
+        originalColor: edgeColor,
+        isPath: isEdgeOnPath
       };
-      
+
       edgesGroup.add(line);
     });
 
-  }, [graphData, layoutMode, searchQuery, relationFilter]);
+  }, [graphData, layoutMode, searchQuery, relationFilter, foundPath, pathStartNode, pathEndNode]);
 
   // Main Render Loop (Orbital revolution, camera panning, raycasting)
   useEffect(() => {
@@ -589,8 +880,9 @@ export default function KnowledgeGraph() {
         <div className="galaxy-status-hud font-mono">
           <div className="telemetry-bar">
             <span>[ FOCUS: {activeNamespace.toUpperCase()} ]</span>
-            <span>[ NODECOUNT: {graphData.nodes?.length || 0} ]</span>
-            <span>[ EDGECOUNT: {graphData.edges?.length || 0} ]</span>
+            <span>[ NODECOUNT: {graphStats.nodes || graphData.nodes?.length || 0} ]</span>
+            <span>[ EDGECOUNT: {graphStats.edges || graphData.edges?.length || 0} ]</span>
+            <span>[ RELATIONTYPES: {graphStats.relation_types?.length || 0} ]</span>
             <span>[ FPS: 60 ]</span>
           </div>
           <span className="scan-line"></span>
@@ -637,74 +929,110 @@ export default function KnowledgeGraph() {
           >
             <div className="sci-form font-mono" style={{ display: 'flex', flexDirection: 'column', gap: '14px', height: '100%' }}>
             
-            {/* Holographic Disk Dial (SVG background + Cardinal buttons) */}
-            <div className="holographic-disk-container">
-              {/* Rotating background rings */}
-              <svg className="hud-disk-svg" viewBox="0 0 200 200">
-                <circle cx="100" cy="100" r="90" fill="none" stroke="rgba(255, 187, 0, 0.03)" strokeWidth="0.8" />
-                <circle cx="100" cy="100" r="76" fill="none" stroke="rgba(255, 187, 0, 0.08)" strokeWidth="1.2" strokeDasharray="10,8" className="spinning-dashed-ring" />
-                <circle cx="100" cy="100" r="58" fill="none" stroke="rgba(0, 242, 254, 0.12)" strokeWidth="1" strokeDasharray="25,10" className="counter-spinning-ring" />
-                <circle cx="100" cy="100" r="40" fill="none" stroke="rgba(255, 187, 0, 0.04)" strokeWidth="0.8" />
-                
-                {/* Horizontal and vertical axis tick lines */}
-                <line x1="100" y1="5" x2="100" y2="195" stroke="rgba(255, 187, 0, 0.04)" strokeWidth="0.8" />
-                <line x1="5" y1="100" x2="195" y2="100" stroke="rgba(255, 187, 0, 0.04)" strokeWidth="0.8" />
-              </svg>
-
-              {/* Cardinal controls absolute layout */}
-              <div className="disk-controls">
-                {/* Center Core Button: Play/Pause */}
+            {/* Extract & Import Section */}
+            <div className="form-group-sci" style={{ borderBottom: '1px dashed rgba(255, 187, 0, 0.15)', paddingBottom: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              
+              {/* Extract Codebase Button/Input */}
+              {!showExtractInput ? (
                 <button
                   type="button"
-                  onClick={() => setAutoRotate(!autoRotate)}
-                  className={`disk-btn-center ${autoRotate ? 'active' : ''}`}
-                  title="星系公转 (Spin)"
+                  onClick={() => { setShowExtractInput(true); setShowImportFileInput(false); }}
+                  className="sci-submit-btn bg-cyan"
+                  style={{ width: '100%', height: '30px', fontSize: '11px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
                 >
-                  <div className="pulse-core-hud"></div>
-                  <span className="btn-lbl">SPIN</span>
-                  <span className="btn-status">{autoRotate ? 'ON' : 'OFF'}</span>
+                  📂 提取代码库 (Extract Codebase)
                 </button>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={{ fontSize: '9px', color: 'rgba(255, 187, 0, 0.8)' }}>代码库目录绝对路径 (Absolute Path):</label>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <input
+                      type="text"
+                      value={extractPath}
+                      onChange={(e) => setExtractPath(e.target.value)}
+                      placeholder="例如: E:/my-project"
+                      className="sci-control-input"
+                      style={{ height: '28px', fontSize: '11px', padding: '4px 8px', flex: 1 }}
+                      disabled={extracting}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleExtractCodebase}
+                      className="sci-submit-btn bg-cyan"
+                      style={{ height: '28px', fontSize: '11px', padding: '0 12px', minWidth: '50px' }}
+                      disabled={extracting || !extractPath.trim()}
+                    >
+                      {extracting ? '...' : '开始'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setShowExtractInput(false); setExtractPath(''); }}
+                      className="wm-edit-btn-inline"
+                      style={{ height: '28px', fontSize: '11px', padding: '0 8px' }}
+                      disabled={extracting}
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              )}
 
-                {/* Top: Spiral layout */}
+              {/* Import graph.json Button/Input */}
+              {!showImportFileInput ? (
                 <button
                   type="button"
-                  onClick={() => setLayoutMode('galaxy')}
-                  className={`disk-btn-cardinal cardinal-top ${layoutMode === 'galaxy' ? 'selected' : ''}`}
-                  title="切换到星系漩涡模式 (Spiral)"
+                  onClick={() => { setShowImportFileInput(true); setShowExtractInput(false); }}
+                  className="sci-submit-btn bg-cyan"
+                  style={{ width: '100%', height: '30px', fontSize: '11px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
                 >
-                  漩涡
+                  📥 导入 graph.json (Import JSON)
                 </button>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={{ fontSize: '9px', color: 'rgba(255, 187, 0, 0.8)' }}>graph.json 文件绝对路径 (Absolute Path):</label>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <input
+                      type="text"
+                      value={importFilePath}
+                      onChange={(e) => setImportFilePath(e.target.value)}
+                      placeholder="例如: E:/graphify-out/graph.json"
+                      className="sci-control-input"
+                      style={{ height: '28px', fontSize: '11px', padding: '4px 8px', flex: 1 }}
+                      disabled={importingFile}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleImportGraphFile}
+                      className="sci-submit-btn bg-cyan"
+                      style={{ height: '28px', fontSize: '11px', padding: '0 12px', minWidth: '50px' }}
+                      disabled={importingFile || !importFilePath.trim()}
+                    >
+                      {importingFile ? '...' : '开始'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setShowImportFileInput(false); setImportFilePath(''); }}
+                      className="wm-edit-btn-inline"
+                      style={{ height: '28px', fontSize: '11px', padding: '0 8px' }}
+                      disabled={importingFile}
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
 
-                {/* Right: Reset camera */}
-                <button
-                  type="button"
-                  onClick={handleResetCamera}
-                  className="disk-btn-cardinal cardinal-right"
-                  title="重置观测视角"
-                >
-                  重置
-                </button>
-
-                {/* Bottom: Solar layout */}
-                <button
-                  type="button"
-                  onClick={() => setLayoutMode('solar')}
-                  className={`disk-btn-cardinal cardinal-bottom ${layoutMode === 'solar' ? 'selected' : ''}`}
-                  title="切换到天体轨道模式 (Solar)"
-                >
-                  轨道
-                </button>
-
-                {/* Left: Sync data */}
-                <button
-                  type="button"
-                  onClick={fetchGraph}
-                  className="disk-btn-cardinal cardinal-left"
-                  title="同步星系图谱"
-                >
-                  同步
-                </button>
-              </div>
+            {/* Orbit Controls Toggle */}
+            <div className="form-group-sci" style={{ borderBottom: '1px dashed rgba(255, 187, 0, 0.15)', paddingBottom: '10px' }}>
+              <button
+                type="button"
+                onClick={() => setShowControlDial(!showControlDial)}
+                className={`sci-submit-btn ${showControlDial ? 'bg-cyan' : 'wm-edit-btn-inline'}`}
+                style={{ width: '100%', height: '30px', fontSize: '11px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+              >
+                🛰 {showControlDial ? '隐藏视角控制盘 (Hide Dial)' : '展开视角控制盘 (Show Dial)'}
+              </button>
             </div>
 
             {/* Quick Filters */}
@@ -756,6 +1084,142 @@ export default function KnowledgeGraph() {
               />
             </div>
 
+            {/* Pathfinder Section */}
+            <div className="form-group-sci" style={{ borderTop: '1px dashed rgba(255, 187, 0, 0.15)', paddingTop: '10px' }}>
+              <label style={{ fontSize: '9px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>🔍 拓扑寻路 (Pathfinder)</span>
+                {foundPath && (
+                  <span 
+                    onClick={handleClearPath} 
+                    style={{ color: '#ef4444', cursor: 'pointer', textTransform: 'none', fontWeight: 'normal', fontSize: '8.5px' }}
+                  >
+                    [清除路径]
+                  </span>
+                )}
+              </label>
+
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                {/* Node A Slot */}
+                <div 
+                  className="path-slot"
+                  style={{
+                    flex: 1,
+                    height: '28px',
+                    borderRadius: '4px',
+                    border: '1px dashed rgba(255, 187, 0, 0.25)',
+                    background: pathStartNode ? 'rgba(16, 185, 129, 0.08)' : 'rgba(0,0,0,0.2)',
+                    borderColor: pathStartNode ? '#10b981' : 'rgba(255, 187, 0, 0.25)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '9.5px',
+                    color: pathStartNode ? '#10b981' : 'rgba(255,255,255,0.4)',
+                    cursor: 'pointer',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    padding: '0 4px'
+                  }}
+                  title={pathStartNode ? `起点: ${pathStartNode.content}` : '设定起点 A（点击星体并在遥测卡设为起点）'}
+                  onClick={() => {
+                    if (selectedNode) {
+                      setPathStartNode({ id: selectedNode.id, content: selectedNode.content });
+                      setFoundPath(null);
+                    } else {
+                      alert('请先在星系中点击选择一个星体！');
+                    }
+                  }}
+                >
+                  {pathStartNode ? `A: ${pathStartNode.content.substring(0, 8)}...` : '设定起点 A'}
+                </div>
+
+                <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '10px' }}>⇄</span>
+
+                {/* Node B Slot */}
+                <div 
+                  className="path-slot"
+                  style={{
+                    flex: 1,
+                    height: '28px',
+                    borderRadius: '4px',
+                    border: '1px dashed rgba(255, 187, 0, 0.25)',
+                    background: pathEndNode ? 'rgba(239, 68, 68, 0.08)' : 'rgba(0,0,0,0.2)',
+                    borderColor: pathEndNode ? '#ef4444' : 'rgba(255, 187, 0, 0.25)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '9.5px',
+                    color: pathEndNode ? '#ef4444' : 'rgba(255,255,255,0.4)',
+                    cursor: 'pointer',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    padding: '0 4px'
+                  }}
+                  title={pathEndNode ? `终点: ${pathEndNode.content}` : '设定终点 B（点击星体并在遥测卡设为终点）'}
+                  onClick={() => {
+                    if (selectedNode) {
+                      setPathEndNode({ id: selectedNode.id, content: selectedNode.content });
+                      setFoundPath(null);
+                    } else {
+                      alert('请先在星系中点击选择一个星体！');
+                    }
+                  }}
+                >
+                  {pathEndNode ? `B: ${pathEndNode.content.substring(0, 8)}...` : '设定终点 B'}
+                </div>
+
+                {/* Find path button */}
+                <button
+                  type="button"
+                  onClick={handleFindPath}
+                  disabled={!pathStartNode || !pathEndNode || pathLoading}
+                  className="sci-submit-btn bg-cyan"
+                  style={{ height: '28px', padding: '0 10px', fontSize: '10px', minWidth: '45px' }}
+                >
+                  {pathLoading ? '...' : '寻路'}
+                </button>
+              </div>
+
+              {/* Path Result display */}
+              {foundPath && (
+                <div 
+                  className="path-result-box scrollbar-thin"
+                  style={{
+                    fontSize: '9px',
+                    background: 'rgba(0,0,0,0.3)',
+                    border: '1px solid rgba(16, 185, 129, 0.2)',
+                    borderRadius: '4px',
+                    padding: '5px 8px',
+                    color: '#e5e7eb',
+                    maxHeight: '60px',
+                    overflowY: 'auto',
+                    lineHeight: '1.4'
+                  }}
+                >
+                  {foundPath.length === 0 ? (
+                    <span style={{ color: '#ef4444' }}>未找到连通的引力路径 (Max Depth: 5)</span>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <span style={{ color: '#10b981', fontWeight: 'bold' }}>✓ 已打通引力通路:</span>
+                      <div>
+                        {pathStartNode.content.substring(0, 10)}...
+                        {foundPath.map((step, idx) => {
+                          const nextNode = graphData.nodes?.find(n => n.id === step.to);
+                          const nextLabel = nextNode ? nextNode.content.substring(0, 10) + '...' : `0x${step.to.substring(0, 6)}`;
+                          return (
+                            <span key={idx}>
+                              {' '}→ <span style={{ color: '#00f2fe' }}>[{step.relation}]</span> → {nextLabel}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Telemetry Output Box */}
             <div className="holographic-telemetry-box" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: '180px' }}>
               <div className="telemetry-box-header font-mono">
@@ -779,6 +1243,29 @@ export default function KnowledgeGraph() {
                       {selectedNode.is_pinned ? '★ 置顶高频' : '☆ 常规活跃'}
                     </span>
                   </div>
+
+                  {selectedNode.node_type && (
+                    <div className="telemetry-info-row">
+                      <span className="lbl">节点类型:</span>
+                      <span className="val text-cyan">{selectedNode.node_type.toUpperCase()}</span>
+                    </div>
+                  )}
+
+                  {selectedNode.community_id != null && (
+                    <div className="telemetry-info-row">
+                      <span className="lbl">所属集群:</span>
+                      <span className="val text-cyan">CLUSTER_{selectedNode.community_id}</span>
+                    </div>
+                  )}
+
+                  {selectedNode.source_file && (
+                    <div className="telemetry-info-row" style={{ flexDirection: 'column', gap: '3px', alignItems: 'flex-start' }}>
+                      <span className="lbl">源文件:</span>
+                      <span className="val" style={{ fontSize: '9.5px', wordBreak: 'break-all', color: 'hsl(var(--text-muted))' }}>
+                        {selectedNode.source_file}{selectedNode.source_location ? ` @ ${selectedNode.source_location}` : ''}
+                      </span>
+                    </div>
+                  )}
 
                   <div className="telemetry-info-row">
                     <span className="lbl">调阅频度:</span>
@@ -811,6 +1298,85 @@ export default function KnowledgeGraph() {
                       ☄ 擦除
                     </button>
                   </div>
+
+                  {/* Path Shortcuts */}
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPathStartNode({ id: selectedNode.id, content: selectedNode.content });
+                        setFoundPath(null);
+                      }}
+                      className="wm-edit-btn-inline"
+                      style={{ flex: 1, height: '24px', fontSize: '9px', color: '#10b981', borderColor: 'rgba(16, 185, 129, 0.3)' }}
+                    >
+                      🚩 设为起点 A
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPathEndNode({ id: selectedNode.id, content: selectedNode.content });
+                        setFoundPath(null);
+                      }}
+                      className="wm-edit-btn-inline"
+                      style={{ flex: 1, height: '24px', fontSize: '9px', color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+                    >
+                      🏁 设为终点 B
+                    </button>
+                  </div>
+
+                  {/* Neighbors list */}
+                  {detailLoading ? (
+                    <div style={{ fontSize: '9.5px', color: 'rgba(255, 187, 0, 0.5)', marginTop: '10px', textAlign: 'center' }}>
+                      正在拉取引力邻居数据...
+                    </div>
+                  ) : nodeDetail?.edges && nodeDetail.edges.length > 0 ? (
+                    <div className="telemetry-info-row" style={{ flexDirection: 'column', gap: '6px', borderBottom: 'none', marginTop: '10px' }}>
+                      <span className="lbl">关联引力星体 ({nodeDetail.edges.length}):</span>
+                      <div className="telemetry-neighbors-box scrollbar-thin" style={{ maxHeight: '100px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px', width: '100%' }}>
+                        {nodeDetail.edges.map((edge, idx) => {
+                          const nbNode = graphData.nodes?.find(n => n.id === edge.id);
+                          const nbLabel = nbNode ? nbNode.content.substring(0, 25) + '...' : `0x${edge.id.substring(0, 8)}`;
+                          return (
+                            <div
+                              key={idx}
+                              onClick={() => {
+                                const mesh = nodeMeshesRef.current?.find(m => m.userData.id === edge.id);
+                                if (mesh) {
+                                  setSelectedNode(mesh.userData);
+                                  const targetPos = new THREE.Vector3()
+                                    .copy(mesh.position)
+                                    .add(new THREE.Vector3(0, 1.8, 2.5));
+                                  targetCamPosRef.current = targetPos;
+                                  targetLookAtRef.current.copy(mesh.position);
+                                }
+                              }}
+                              className="neighbor-row"
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                fontSize: '9.5px',
+                                padding: '4px 6px',
+                                background: 'rgba(255, 187, 0, 0.03)',
+                                border: '1px solid rgba(255, 187, 0, 0.08)',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease',
+                                color: '#e5e7eb'
+                              }}
+                            >
+                              <span style={{ color: edge.direction === 'out' ? '#ffbb00' : '#00f2fe' }}>
+                                {edge.direction === 'out' ? '→' : '←'} [{edge.relation}]
+                              </span>
+                              <span style={{ maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={nbNode?.content}>
+                                {nbLabel}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
 
                   {/* Link Subform */}
                   {isLinking && (
@@ -864,6 +1430,95 @@ export default function KnowledgeGraph() {
               )}
             </div>
 
+            </div>
+          </GlassCard>
+        </div>
+      )}
+
+      {/* Holographic Disk Popup */}
+      {isConsoleOpen && showControlDial && (
+        <div className="holographic-disk-popup">
+          <GlassCard
+            title={
+              <div className="console-popup-header">
+                <span>控制罗盘 (ORBIT DIAL)</span>
+                <button
+                  type="button"
+                  onClick={() => setShowControlDial(false)}
+                  className="console-close-btn"
+                  title="关闭罗盘"
+                >
+                  ×
+                </button>
+              </div>
+            }
+            glowColor="cyan"
+            className="hud-card"
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '10px' }}>
+              <div className="holographic-disk-container" style={{ margin: 0 }}>
+                {/* Rotating background rings */}
+                <svg className="hud-disk-svg" viewBox="0 0 200 200">
+                  <circle cx="100" cy="100" r="90" fill="none" stroke="rgba(255, 187, 0, 0.03)" strokeWidth="0.8" />
+                  <circle cx="100" cy="100" r="76" fill="none" stroke="rgba(255, 187, 0, 0.08)" strokeWidth="1.2" strokeDasharray="10,8" className="spinning-dashed-ring" />
+                  <circle cx="100" cy="100" r="58" fill="none" stroke="rgba(0, 242, 254, 0.12)" strokeWidth="1" strokeDasharray="25,10" className="counter-spinning-ring" />
+                  <circle cx="100" cy="100" r="40" fill="none" stroke="rgba(255, 187, 0, 0.04)" strokeWidth="0.8" />
+                  
+                  {/* Horizontal and vertical axis tick lines */}
+                  <line x1="100" y1="5" x2="100" y2="195" stroke="rgba(255, 187, 0, 0.04)" strokeWidth="0.8" />
+                  <line x1="5" y1="100" x2="195" y2="100" stroke="rgba(255, 187, 0, 0.04)" strokeWidth="0.8" />
+                </svg>
+
+                {/* Cardinal controls absolute layout */}
+                <div className="disk-controls">
+                  <button
+                    type="button"
+                    onClick={() => setAutoRotate(!autoRotate)}
+                    className={`disk-btn-center ${autoRotate ? 'active' : ''}`}
+                    title="星系公转 (Spin)"
+                  >
+                    <div className="pulse-core-hud"></div>
+                    <span className="btn-lbl">SPIN</span>
+                    <span className="btn-status">{autoRotate ? 'ON' : 'OFF'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setLayoutMode('galaxy')}
+                    className={`disk-btn-cardinal cardinal-top ${layoutMode === 'galaxy' ? 'selected' : ''}`}
+                    title="切换到星系漩涡模式 (Spiral)"
+                  >
+                    漩涡
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleResetCamera}
+                    className="disk-btn-cardinal cardinal-right"
+                    title="重置观测视角"
+                  >
+                    重置
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setLayoutMode('solar')}
+                    className={`disk-btn-cardinal cardinal-bottom ${layoutMode === 'solar' ? 'selected' : ''}`}
+                    title="切换到天体轨道模式 (Solar)"
+                  >
+                    轨道
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={fetchGraph}
+                    className="disk-btn-cardinal cardinal-left"
+                    title="同步星系图谱"
+                  >
+                    同步
+                  </button>
+                </div>
+              </div>
             </div>
           </GlassCard>
         </div>
@@ -974,6 +1629,19 @@ export default function KnowledgeGraph() {
 
         .galaxy-hud-panel.popup-console :global(*) {
           pointer-events: auto;
+        }
+
+        .holographic-disk-popup {
+          position: absolute;
+          right: 370px;
+          top: 95px;
+          width: 220px;
+          height: auto;
+          z-index: 1000;
+          display: flex;
+          flex-direction: column;
+          pointer-events: auto;
+          transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
         }
 
         /* Console Toggle Button */
@@ -1314,6 +1982,174 @@ export default function KnowledgeGraph() {
         }
         .scrollbar-thin::-webkit-scrollbar-thumb {
           background: rgba(255, 187, 0, 0.15);
+        }
+
+        /* Premium Sci-Fi form controls */
+        .form-group-sci {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .form-group-sci label {
+          font-size: 9px;
+          color: rgba(255, 187, 0, 0.75);
+          font-weight: bold;
+          letter-spacing: 0.5px;
+          text-transform: uppercase;
+        }
+
+        .sci-control-input, .sci-control-select {
+          background: rgba(12, 9, 6, 0.85);
+          border: 1px solid rgba(255, 187, 0, 0.25);
+          border-radius: 4px;
+          color: #ffddaa;
+          font-family: var(--font-mono);
+          outline: none;
+          transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+          width: 100%;
+        }
+
+        .sci-control-input:focus, .sci-control-select:focus {
+          border-color: hsl(var(--color-cyan));
+          box-shadow: 0 0 10px rgba(0, 242, 254, 0.25);
+          background: rgba(18, 14, 9, 0.95);
+        }
+
+        .sci-control-input::placeholder {
+          color: rgba(255, 187, 0, 0.3);
+        }
+
+        /* Custom dropdown arrow for select elements */
+        .sci-control-select {
+          appearance: none;
+          -webkit-appearance: none;
+          -moz-appearance: none;
+          background-image: url("data:image/svg+xml;utf8,<svg fill='%23ffbb00' height='24' viewBox='0 0 24 24' width='24' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/><path d='M0 0h24v24H0z' fill='none'/></svg>");
+          background-repeat: no-repeat;
+          background-position: right 6px center;
+          background-size: 16px;
+          padding-right: 24px !important;
+        }
+
+        .sci-control-select option {
+          background: #0d0905;
+          color: #ffddaa;
+        }
+
+        /* Premium Custom range slider */
+        .sci-slider {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 100%;
+          height: 4px;
+          background: rgba(255, 187, 0, 0.15);
+          outline: none;
+          border-radius: 2px;
+          cursor: pointer;
+          transition: background 0.2s ease;
+        }
+
+        .sci-slider:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+        }
+
+        .sci-slider::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 12px;
+          height: 12px;
+          border-radius: 50%;
+          background: #ffbb00;
+          box-shadow: 0 0 8px rgba(255, 187, 0, 0.8);
+          cursor: pointer;
+          transition: transform 0.1s ease, background-color 0.2s ease;
+        }
+
+        .sci-slider:not(:disabled)::-webkit-slider-thumb:hover {
+          transform: scale(1.25);
+          background: #00f2fe;
+          box-shadow: 0 0 10px rgba(0, 242, 254, 0.9);
+        }
+
+        .sci-slider::-moz-range-thumb {
+          width: 12px;
+          height: 12px;
+          border: none;
+          border-radius: 50%;
+          background: #ffbb00;
+          box-shadow: 0 0 8px rgba(255, 187, 0, 0.8);
+          cursor: pointer;
+          transition: transform 0.1s ease, background-color 0.2s ease;
+        }
+
+        .sci-slider:not(:disabled)::-moz-range-thumb:hover {
+          transform: scale(1.25);
+          background: #00f2fe;
+          box-shadow: 0 0 10px rgba(0, 242, 254, 0.9);
+        }
+
+        /* Subform submit button styling */
+        .sci-submit-btn {
+          border: none;
+          border-radius: 4px;
+          padding: 4px 10px;
+          font-family: var(--font-mono);
+          font-size: 10px;
+          font-weight: bold;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          color: #030201;
+        }
+
+        .sci-submit-btn:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .bg-cyan {
+          background: hsl(var(--color-cyan));
+          box-shadow: 0 2px 8px rgba(0, 242, 254, 0.3);
+        }
+        
+        .bg-cyan:hover:not(:disabled) {
+          background: #00e0ec;
+          box-shadow: 0 4px 12px rgba(0, 242, 254, 0.5);
+        }
+
+        /* Inline action buttons */
+        .wm-edit-btn-inline, .wm-del-btn-inline {
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 187, 0, 0.15);
+          color: rgba(255, 255, 255, 0.7);
+          border-radius: 3px;
+          font-size: 9px;
+          padding: 2px 6px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          font-family: var(--font-mono);
+        }
+
+        .wm-edit-btn-inline:hover {
+          border-color: hsl(var(--color-cyan));
+          color: hsl(var(--color-cyan));
+          background: rgba(0, 242, 254, 0.05);
+          box-shadow: 0 0 8px rgba(0, 242, 254, 0.2);
+        }
+
+        .wm-del-btn-inline:hover {
+          border-color: hsl(var(--color-red));
+          color: hsl(var(--color-red));
+          background: rgba(244, 63, 94, 0.08);
+          box-shadow: 0 0 8px rgba(244, 63, 94, 0.2);
+        }
+
+        .neighbor-row:hover {
+          background: rgba(255, 187, 0, 0.1) !important;
+          border-color: rgba(255, 187, 0, 0.3) !important;
+          color: white !important;
+          box-shadow: 0 0 8px rgba(255, 187, 0, 0.15);
         }
       `}</style>
     </div>
