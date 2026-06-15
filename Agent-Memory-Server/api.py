@@ -18,9 +18,14 @@ if hasattr(sys.stderr, 'reconfigure'):
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from memory_engine import MemoryEngine
+from task_manager import task_manager
+import asyncio
+import json
+import threading
 
 engine: MemoryEngine = None
 
@@ -633,19 +638,77 @@ class GraphFileImportRequest(BaseModel):
 
 @app.post("/api/graph/extract")
 def extract_codebase(req: GraphExtractRequest):
-    """Run Graphify extraction on a directory and import into Agent Memory."""
+    """Run Graphify extraction on a directory and import into Agent Memory (background task)."""
     _check_protected(req.namespace)
     from graphify_bridge import extract_to_memory
-    result = extract_to_memory(req.target_dir, req.namespace, os.environ.get("MEMORY_DB_DIR", "./data"))
-    return result
+
+    # Create task and return task ID immediately
+    task_id = task_manager.create_task()
+
+    def run_extraction_task():
+        """Run extraction in background thread."""
+        def progress_callback(stage, current, total, message):
+            task_manager.update_progress(task_id, stage, current, total, message)
+
+        try:
+            result = extract_to_memory(
+                req.target_dir,
+                req.namespace,
+                os.environ.get("MEMORY_DB_DIR", "./data"),
+                progress_callback=progress_callback
+            )
+            task_manager.complete_task(task_id, result)
+        except Exception as e:
+            import traceback
+            task_manager.fail_task(task_id, f"{str(e)}\n{traceback.format_exc()}")
+
+    # Start background thread
+    thread = threading.Thread(target=run_extraction_task, daemon=True)
+    thread.start()
+
+    # Return task ID immediately
+    return {"task_id": task_id, "namespace": req.namespace, "message": "任务已创建，后台正在处理"}
+
+@app.get("/api/tasks/{task_id}")
+def get_task_status(task_id: str):
+    """Get task status and progress."""
+    task = task_manager.get_task_dict(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
 
 @app.post("/api/graph/import-file")
 def import_graph_file(req: GraphFileImportRequest):
-    """Import an existing graphify graph.json file into Agent Memory."""
+    """Import an existing graphify graph.json file into Agent Memory (background task)."""
     _check_protected(req.namespace)
     from graphify_bridge import import_from_graph_json
-    result = import_from_graph_json(req.graph_path, req.namespace, os.environ.get("MEMORY_DB_DIR", "./data"))
-    return result
+
+    # Create task and return task ID immediately
+    task_id = task_manager.create_task()
+
+    def run_import_task():
+        """Run import in background thread."""
+        def progress_callback(stage, current, total, message):
+            task_manager.update_progress(task_id, stage, current, total, message)
+
+        try:
+            result = import_from_graph_json(
+                req.graph_path,
+                req.namespace,
+                os.environ.get("MEMORY_DB_DIR", "./data"),
+                progress_callback=progress_callback
+            )
+            task_manager.complete_task(task_id, result)
+        except Exception as e:
+            import traceback
+            task_manager.fail_task(task_id, f"{str(e)}\n{traceback.format_exc()}")
+
+    # Start background thread
+    thread = threading.Thread(target=run_import_task, daemon=True)
+    thread.start()
+
+    # Return task ID immediately
+    return {"task_id": task_id, "namespace": req.namespace, "message": "任务已创建，后台正在处理"}
 
 class DebugLogRequest(BaseModel):
     message: str
