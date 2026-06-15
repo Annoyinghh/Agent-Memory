@@ -2235,7 +2235,17 @@ export default function SPAHomepage() {
                     <ul style={{ paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       <li>后端接口基准地址：<code className="text-cyan">http://127.0.0.1:8900</code></li>
                       <li>交互式 Swagger 接口文档：<a href="http://127.0.0.1:8900/docs" target="_blank" rel="noreferrer" className="text-cyan" style={{ textDecoration: 'underline' }}>http://127.0.0.1:8900/docs</a></li>
-                      <li>MCP (Model Context Protocol) 协议接口：脚本文件位于 <code className="text-white">Agent-Memory-Server/server.py</code>，支持 Claude Code 等 Agent 零距离直连。</li>
+                      <li>MCP (Model Context Protocol) 协议接口：脚本文件位于 <code className="text-white">Agent-Memory-Server/server.py</code>，已注册供 Antigravity IDE 和 Claude Code 命令行工具使用。</li>
+                      <li>
+                        <strong>如何在 Claude Code (CLI) 里面直接调用：</strong>
+                        <div style={{ background: 'rgba(0,0,0,0.35)', padding: '10px', borderRadius: '8px', marginTop: '6px', borderLeft: '3px solid hsl(var(--color-cyan))', border: '1px solid rgba(255, 187, 0, 0.15)', lineHeight: '1.7' }}>
+                          重启 <code>claude</code> CLI 后，直接用普通人类语言对它下达记忆指令即可触发，例如：<br/>
+                          - <strong>添加长期记忆：</strong> <code>记住我在这个项目的开发偏好：所有后端 API 的超时时间都是 15s</code><br/>
+                          - <strong>跨会话查询：</strong> <code>帮我查一下之前记录的后端 API 偏好有哪些</code><br/>
+                          - <strong>读写工作记忆：</strong> <code>把临时变量 current_branch 记录为 feature/auth</code><br/>
+                          - <strong>分析星系图谱：</strong> <code>查看当前记忆图谱的统计信息</code>
+                        </div>
+                      </li>
                     </ul>
                   </div>
                 </GlassCard>

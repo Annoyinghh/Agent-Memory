@@ -810,7 +810,6 @@ Conversation:
         return []
 
     @db_lock
-    @db_lock
     def get_graph_stats(self, namespace: str = None) -> Dict[str, Any]:
         if namespace:
             self.cursor.execute("SELECT count(*) FROM memory_fts WHERE namespace=?", (namespace,))

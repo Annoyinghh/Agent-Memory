@@ -6,6 +6,7 @@ __pycache__/
 *.egg-info/
 
 # Data
+data/
 Agent-Memory-Server/data/
 Agent-Memory-Server/graphify-out/
 
