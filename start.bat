@@ -44,7 +44,16 @@ pause >nul
 
 echo.
 echo [*] Stopping services and releasing ports...
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr :3000 ^| findstr LISTENING') do taskkill /f /pid %%a >nul 2>&1
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8900 ^| findstr LISTENING') do taskkill /f /pid %%a >nul 2>&1
+:: Use /t to kill the whole process tree (cmd wrapper + python/node child),
+:: otherwise child python.exe keeps running and locks the sqlite database file.
+taskkill /f /t /fi "WINDOWTITLE eq Agent Memory API*" >nul 2>&1
+taskkill /f /t /fi "WINDOWTITLE eq Agent Memory Frontend*" >nul 2>&1
+
+:: Sweep any api.py / next dev remnants that released the port but still run.
+for /f "tokens=2" %%p in ('tasklist /v /fo csv ^| findstr /i "api.py"') do taskkill /f /t /pid %%p >nul 2>&1
+for /f "tokens=2" %%p in ('tasklist /v /fo csv ^| findstr /i "next dev next-server npm"') do taskkill /f /t /pid %%p >nul 2>&1
+
+:: Final port-based safety net.
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":3000 :8900" ^| findstr LISTENING') do taskkill /f /t /pid %%a >nul 2>&1
 echo [OK] All services stopped successfully.
 timeout /t 2 >nul

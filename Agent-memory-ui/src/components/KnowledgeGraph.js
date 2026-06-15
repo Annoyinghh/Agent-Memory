@@ -42,12 +42,14 @@ export default function KnowledgeGraph() {
   const [extractPath, setExtractPath] = useState('');
   const [extractNamespace, setExtractNamespace] = useState('');
   const [extracting, setExtracting] = useState(false);
+  const [extractProgress, setExtractProgress] = useState({ stage: '', current: 0, total: 0, message: '', percent: 0 });
 
   // Import graph.json File States
   const [showImportFileInput, setShowImportFileInput] = useState(false);
   const [importFilePath, setImportFilePath] = useState('');
   const [importNamespace, setImportNamespace] = useState('');
   const [importingFile, setImportingFile] = useState(false);
+  const [importProgress, setImportProgress] = useState({ stage: '', current: 0, total: 0, message: '', percent: 0 });
 
   // Orbit Control Dial State
   const [showControlDial, setShowControlDial] = useState(false);
@@ -132,6 +134,51 @@ export default function KnowledgeGraph() {
     fetchDetail();
   }, [selectedNode?.id]);
 
+  // Poll task status until complete (background task mode)
+  const pollTaskUntilComplete = async (taskId, namespace, setProgress, onComplete, onErrorLabel) => {
+    const pollInterval = 1000; // 1 second
+    const maxPolls = 1200; // max ~20 minutes
+    let pollCount = 0;
+
+    const poll = async () => {
+      try {
+        const status = await api.getTaskStatus(taskId);
+        setProgress({
+          stage: status.stage,
+          current: status.current,
+          total: status.total,
+          message: status.message,
+          percent: status.percent
+        });
+
+        if (status.status === 'completed') {
+          onComplete(status.result || {});
+          return;
+        } else if (status.status === 'failed') {
+          alert(`${onErrorLabel}: ${status.error || '未知错误'}`);
+          setProgress({ stage: '', current: 0, total: 0, message: '', percent: 0 });
+          return;
+        } else if (pollCount < maxPolls) {
+          pollCount++;
+          setTimeout(poll, pollInterval);
+        } else {
+          alert(`${onErrorLabel}: 超时，请稍后手动刷新命名空间查看结果。`);
+        }
+      } catch (err) {
+        console.error('[KnowledgeGraph] pollTask failed:', err);
+        // On poll error, retry a few times before giving up
+        if (pollCount < maxPolls) {
+          pollCount++;
+          setTimeout(poll, pollInterval * 2);
+        } else {
+          alert(`${onErrorLabel}: 无法获取任务进度，请稍后手动刷新。`);
+        }
+      }
+    };
+
+    poll();
+  };
+
   // Run Graphify extraction on codebase directory
   const handleExtractCodebase = async () => {
     if (!extractPath.trim()) return;
@@ -150,22 +197,47 @@ export default function KnowledgeGraph() {
     }
 
     setExtracting(true);
+    setExtractProgress({ stage: 'submitting', current: 0, total: 0, message: '提交任务中...', percent: 0 });
+
     try {
-      const res = await api.extractCodebase(extractPath.trim(), targetNamespace);
-      setLastEvent({
-        type: 'insert',
-        namespace: targetNamespace,
-        message: `代码库提取完成！导入了 ${res.nodes_imported || 0} 个节点，${res.edges_imported || 0} 条引力链路。`
-      });
-      alert(`提取成功！已导入 ${res.nodes_imported || 0} 个知识节点，${res.edges_imported || 0} 条关系链到命名空间 "${targetNamespace}"。`);
+      // Submit task - returns immediately with task_id
+      const taskRes = await api.extractCodebase(extractPath.trim(), targetNamespace);
+      const taskId = taskRes.task_id;
+
+      if (!taskId) {
+        throw new Error('未收到任务ID');
+      }
+
       setShowExtractInput(false);
       setExtractPath('');
       setExtractNamespace('');
-      fetchGraph();
+
+      // Poll until complete
+      await pollTaskUntilComplete(
+        taskId,
+        targetNamespace,
+        setExtractProgress,
+        async (result) => {
+          setLastEvent({
+            type: 'insert',
+            namespace: targetNamespace,
+            message: `代码库提取完成！导入了 ${result.nodes_imported || 0} 个节点，${result.edges_imported || 0} 条引力链路。`
+          });
+          await refreshData();
+          if (activeNamespace === targetNamespace) {
+            await fetchGraph();
+          } else {
+            alert(`提取成功！已导入 ${result.nodes_imported || 0} 个知识节点，${result.edges_imported || 0} 条关系链到命名空间 "${targetNamespace}"。\n\n请在顶部切换到 "${targetNamespace}" 命名空间查看导入的图谱。`);
+          }
+          setExtractProgress({ stage: '', current: 0, total: 0, message: '', percent: 0 });
+          setExtracting(false);
+        },
+        '提取失败'
+      );
     } catch (err) {
       console.error('[KnowledgeGraph] extractCodebase failed:', err);
-      alert(`提取失败: ${err.message || err}`);
-    } finally {
+      alert(`提交提取任务失败: ${err.message || err}`);
+      setExtractProgress({ stage: '', current: 0, total: 0, message: '', percent: 0 });
       setExtracting(false);
     }
   };
@@ -188,22 +260,47 @@ export default function KnowledgeGraph() {
     }
 
     setImportingFile(true);
+    setImportProgress({ stage: 'submitting', current: 0, total: 0, message: '提交任务中...', percent: 0 });
+
     try {
-      const res = await api.importGraphFile(importFilePath.trim(), targetNamespace);
-      setLastEvent({
-        type: 'insert',
-        namespace: targetNamespace,
-        message: `导入 graph.json 完成！导入了 ${res.nodes_imported || 0} 个节点，${res.edges_imported || 0} 条引力链路。`
-      });
-      alert(`导入成功！已导入 ${res.nodes_imported || 0} 个知识节点，${res.edges_imported || 0} 条关系链到命名空间 "${targetNamespace}"。`);
+      // Submit task - returns immediately with task_id
+      const taskRes = await api.importGraphFile(importFilePath.trim(), targetNamespace);
+      const taskId = taskRes.task_id;
+
+      if (!taskId) {
+        throw new Error('未收到任务ID');
+      }
+
       setShowImportFileInput(false);
       setImportFilePath('');
       setImportNamespace('');
-      fetchGraph();
+
+      // Poll until complete
+      await pollTaskUntilComplete(
+        taskId,
+        targetNamespace,
+        setImportProgress,
+        async (result) => {
+          setLastEvent({
+            type: 'insert',
+            namespace: targetNamespace,
+            message: `导入 graph.json 完成！导入了 ${result.nodes_imported || 0} 个节点，${result.edges_imported || 0} 条引力链路。`
+          });
+          await refreshData();
+          if (activeNamespace === targetNamespace) {
+            await fetchGraph();
+          } else {
+            alert(`导入成功！已导入 ${result.nodes_imported || 0} 个知识节点，${result.edges_imported || 0} 条关系链到命名空间 "${targetNamespace}"。\n\n请在顶部切换到 "${targetNamespace}" 命名空间查看导入的图谱。`);
+          }
+          setImportProgress({ stage: '', current: 0, total: 0, message: '', percent: 0 });
+          setImportingFile(false);
+        },
+        '导入失败'
+      );
     } catch (err) {
       console.error('[KnowledgeGraph] importGraphFile failed:', err);
-      alert(`导入失败: ${err.message || err}`);
-    } finally {
+      alert(`提交导入任务失败: ${err.message || err}`);
+      setImportProgress({ stage: '', current: 0, total: 0, message: '', percent: 0 });
       setImportingFile(false);
     }
   };
@@ -1016,6 +1113,27 @@ export default function KnowledgeGraph() {
                       取消
                     </button>
                   </div>
+
+                  {/* Progress Bar for Extract */}
+                  {extracting && (
+                    <div style={{ marginTop: '8px' }}>
+                      <div style={{ fontSize: '9px', color: '#00f2fe', marginBottom: '4px' }}>
+                        [{extractProgress.stage.toUpperCase()}] {extractProgress.message}
+                      </div>
+                      <div style={{ width: '100%', height: '6px', background: 'rgba(0,0,0,0.4)', borderRadius: '3px', overflow: 'hidden', border: '1px solid rgba(0, 242, 254, 0.2)' }}>
+                        <div style={{
+                          width: `${extractProgress.percent}%`,
+                          height: '100%',
+                          background: 'linear-gradient(90deg, #00f2fe, #ffbb00)',
+                          transition: 'width 0.3s ease',
+                          boxShadow: '0 0 10px rgba(0, 242, 254, 0.6)'
+                        }} />
+                      </div>
+                      <div style={{ fontSize: '8px', color: 'rgba(255,255,255,0.5)', marginTop: '2px', textAlign: 'right' }}>
+                        {extractProgress.percent}% ({extractProgress.current}/{extractProgress.total})
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1071,6 +1189,27 @@ export default function KnowledgeGraph() {
                       取消
                     </button>
                   </div>
+
+                  {/* Progress Bar for Import */}
+                  {importingFile && (
+                    <div style={{ marginTop: '8px' }}>
+                      <div style={{ fontSize: '9px', color: '#00f2fe', marginBottom: '4px' }}>
+                        [{importProgress.stage.toUpperCase()}] {importProgress.message}
+                      </div>
+                      <div style={{ width: '100%', height: '6px', background: 'rgba(0,0,0,0.4)', borderRadius: '3px', overflow: 'hidden', border: '1px solid rgba(0, 242, 254, 0.2)' }}>
+                        <div style={{
+                          width: `${importProgress.percent}%`,
+                          height: '100%',
+                          background: 'linear-gradient(90deg, #00f2fe, #ffbb00)',
+                          transition: 'width 0.3s ease',
+                          boxShadow: '0 0 10px rgba(0, 242, 254, 0.6)'
+                        }} />
+                      </div>
+                      <div style={{ fontSize: '8px', color: 'rgba(255,255,255,0.5)', marginTop: '2px', textAlign: 'right' }}>
+                        {importProgress.percent}% ({importProgress.current}/{importProgress.total})
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

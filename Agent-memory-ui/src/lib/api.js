@@ -33,6 +33,76 @@ async function request(path, options = {}) {
   }
 }
 
+/**
+ * SSE (Server-Sent Events) request with progress callback
+ * @param {string} path - API endpoint path
+ * @param {object} body - Request body
+ * @param {function} onProgress - Callback for progress updates: (stage, current, total, message, percent) => void
+ * @returns {Promise<object>} Final result
+ */
+async function sseRequest(path, body, onProgress) {
+  const url = `${BASE_URL}${path}`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Connection': 'keep-alive',
+      'Cache-Control': 'no-cache',
+    },
+    body: JSON.stringify(body),
+    // Disable default timeout
+    signal: null,
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP Error: ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let lastProgressTime = Date.now();
+
+  while (true) {
+    const { done, value } = await reader.read();
+
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+    for (const line of lines) {
+      // Skip empty lines and comments (keep-alive)
+      if (!line.trim() || line.startsWith(':')) {
+        lastProgressTime = Date.now();
+        continue;
+      }
+
+      if (line.startsWith('data: ')) {
+        const data = JSON.parse(line.slice(6));
+
+        if (data.done) {
+          return data.result;
+        } else if (data.error) {
+          throw new Error(data.error);
+        } else if (onProgress) {
+          onProgress(data.stage, data.current, data.total, data.message, data.percent);
+          lastProgressTime = Date.now();
+        }
+      }
+    }
+
+    // Check for timeout (no data for 60 seconds)
+    if (Date.now() - lastProgressTime > 60000) {
+      throw new Error('Connection timeout: no data received for 60 seconds');
+    }
+  }
+
+  throw new Error('Stream ended without result');
+}
+
 export const api = {
   /**
    * Get database statistics
@@ -519,10 +589,10 @@ export const api = {
     }),
 
   /**
-   * Run Graphify extraction on a directory and import into Agent Memory
+   * Run Graphify extraction on a directory - returns task ID immediately (background task)
    * @param {string} targetDir - Directory to extract
    * @param {string} namespace - Target namespace
-   * @returns {Promise<{nodes_imported: number, edges_imported: number, id_map_size: number}>}
+   * @returns {Promise<{task_id: string, namespace: string, message: string}>}
    */
   extractCodebase: (targetDir, namespace) =>
     request('/api/graph/extract', {
@@ -531,16 +601,24 @@ export const api = {
     }),
 
   /**
-   * Import an existing graphify graph.json file into Agent Memory
+   * Import an existing graphify graph.json file - returns task ID immediately (background task)
    * @param {string} graphPath - Path to graph.json
-   * @param {string} namespace - Target namespace
-   * @returns {Promise<{nodes_imported: number, edges_imported: number, id_map_size: number}>}
+   * @string namespace - Target namespace
+   * @returns {Promise<{task_id: string, namespace: string, message: string}>}
    */
   importGraphFile: (graphPath, namespace) =>
     request('/api/graph/import-file', {
       method: 'POST',
       body: JSON.stringify({ graph_path: graphPath, namespace }),
     }),
+
+  /**
+   * Get task status and progress by task ID
+   * @param {string} taskId - Task ID returned from extract/import
+   * @returns {Promise<{task_id, status, stage, current, total, message, percent, result, error}>}
+   */
+  getTaskStatus: (taskId) =>
+    request(`/api/tasks/${encodeURIComponent(taskId)}`, { method: 'GET' }),
 
   /**
    * Get all nodes and edges for a given namespace

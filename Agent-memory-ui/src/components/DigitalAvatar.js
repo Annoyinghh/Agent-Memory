@@ -19,6 +19,7 @@ export default function DigitalAvatar() {
   const synthRef = useRef(null);
   const utteranceRef = useRef(null);
   const hasSpokenFirstTimeRef = useRef(false);
+  const lastEventRef = useRef(null);
   
   const activeTabRef = useRef(activeTab);
   const isGraphAvatarExpandedRef = useRef(isGraphAvatarExpanded);
@@ -42,6 +43,8 @@ export default function DigitalAvatar() {
   // Define speech texts based on event types
   useEffect(() => {
     if (!lastEvent) return;
+    if (lastEvent === lastEventRef.current) return;
+    lastEventRef.current = lastEvent;
 
     let text = '';
     const totalNs = Object.keys(stats.namespaces || {}).length;
