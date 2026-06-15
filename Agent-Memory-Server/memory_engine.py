@@ -5,6 +5,15 @@ import chromadb
 import litellm
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
+import threading
+import functools
+
+def db_lock(func):
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        with self.lock:
+            return func(self, *args, **kwargs)
+    return wrapper
 
 class MemoryItem(BaseModel):
     id: str
@@ -16,6 +25,7 @@ class MemoryItem(BaseModel):
 
 class MemoryEngine:
     def __init__(self, db_dir: str = "./data"):
+        self.lock = threading.RLock()
         os.makedirs(db_dir, exist_ok=True)
         
         # 1. Initialize SQLite (FTS5 + Metadata)
@@ -45,6 +55,7 @@ class MemoryEngine:
     def is_protected(self, namespace: str) -> bool:
         return namespace in self.protected_namespaces
 
+    @db_lock
     def _init_sqlite(self):
         # Create FTS5 virtual table. FTS5 doesn't strictly support filtering by non-text columns efficiently 
         # out of the box, but we can store namespace and source as text and filter during the query.
@@ -128,6 +139,7 @@ class MemoryEngine:
         self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_graph_nodes_external ON graph_nodes(external_id)')
         self.conn.commit()
 
+    @db_lock
     def insert_memory(self, doc_id: str, namespace: str, content: str, source: str, dedup_threshold: float = 0.0) -> str:
         """Insert a memory chunk into both SQLite and ChromaDB, with optional deduplication."""
         
@@ -181,6 +193,7 @@ class MemoryEngine:
         self.set_pinned(inserted_id, True)
         return inserted_id
 
+    @db_lock
     def update_memory(self, doc_id: str, namespace: str, content: str, source: str) -> bool:
         """Update an existing memory chunk in both SQLite and ChromaDB."""
         current_time = int(time.time())
@@ -206,6 +219,7 @@ class MemoryEngine:
     # Importance Scoring Operations
     # =========================================================
 
+    @db_lock
     def record_access(self, doc_id: str) -> None:
         """Increment the access count for a specific memory."""
         self.cursor.execute(
@@ -214,6 +228,7 @@ class MemoryEngine:
         )
         self.conn.commit()
         
+    @db_lock
     def set_pinned(self, doc_id: str, is_pinned: bool) -> None:
         """Pin or unpin a specific memory."""
         pinned_val = 1 if is_pinned else 0
@@ -223,6 +238,7 @@ class MemoryEngine:
         )
         self.conn.commit()
         
+    @db_lock
     def _get_stats(self, doc_id: str) -> dict:
         self.cursor.execute("SELECT access_count, is_pinned FROM memory_stats WHERE id = ?", (doc_id,))
         row = self.cursor.fetchone()
@@ -230,6 +246,7 @@ class MemoryEngine:
             return {"access_count": row[0], "is_pinned": bool(row[1])}
         return {"access_count": 0, "is_pinned": False}
 
+    @db_lock
     def hybrid_search(self, namespace: str, query: str, top_k: int = 5) -> List[MemoryItem]:
         """Perform Hybrid Search: Keyword (FTS5) + Semantic (Chroma)."""
         if not query or query == "__all__" or query.strip() == "":
@@ -369,6 +386,7 @@ class MemoryEngine:
         if score >= 0.5: return "medium"
         return "low"
 
+    @db_lock
     def pack_context(self, namespace: str, query: str, max_tokens: int = 2000) -> str:
         """
         Assemble the most relevant context within a given token budget using LLM-friendly XML.
@@ -447,6 +465,7 @@ class MemoryEngine:
         """Clear all conversational turns from short-term memory."""
         self._short_term_memory[namespace] = []
 
+    @db_lock
     def consolidate_memory(self, namespace: str) -> Optional[str]:
         """
         Summarize the current short-term memory using an LLM and store it as a long-term memory.
@@ -497,6 +516,7 @@ Conversation:
     # Working Memory (Scratchpad) Operations
     # =========================================================
     
+    @db_lock
     def write_working_memory(self, namespace: str, key: str, value: str) -> None:
         """Set a value in the working memory scratchpad for a namespace."""
         current_time = int(time.time())
@@ -509,6 +529,7 @@ Conversation:
         ''', (namespace, key, value, current_time))
         self.conn.commit()
 
+    @db_lock
     def read_working_memory(self, namespace: str, key: str) -> Optional[str]:
         """Read a value from the working memory scratchpad."""
         self.cursor.execute('SELECT value FROM working_memory WHERE namespace=? AND key=?', (namespace, key))
@@ -517,24 +538,29 @@ Conversation:
             return row[0]
         return None
 
+    @db_lock
     def list_working_memory(self, namespace: str) -> Dict[str, str]:
         """Get all working memory keys and values for a namespace."""
         self.cursor.execute('SELECT key, value FROM working_memory WHERE namespace=?', (namespace,))
         return {row[0]: row[1] for row in self.cursor.fetchall()}
 
+    @db_lock
     def delete_working_memory(self, namespace: str, key: str) -> None:
         """Delete a specific key from the working memory scratchpad."""
         self.cursor.execute('DELETE FROM working_memory WHERE namespace=? AND key=?', (namespace, key))
         self.conn.commit()
 
+    @db_lock
     def clear_working_memory(self, namespace: str) -> None:
         """Clear the entire working memory scratchpad for a namespace."""
         self.cursor.execute('DELETE FROM working_memory WHERE namespace=?', (namespace,))
         self.conn.commit()
 
+    @db_lock
     def close(self):
         self.conn.close()
 
+    @db_lock
     def active_forgetting(self, namespace: str, max_capacity: int = 10000) -> int:
         self.cursor.execute('SELECT id FROM memory_fts WHERE namespace=?', (namespace,))
         rows = self.cursor.fetchall()
@@ -572,6 +598,7 @@ Conversation:
     # Session Management Operations
     # =========================================================
 
+    @db_lock
     def create_session(self, namespace: str, session_id: str = None) -> str:
         import uuid
         sid = session_id or str(uuid.uuid4())
@@ -583,6 +610,7 @@ Conversation:
         self.conn.commit()
         return sid
 
+    @db_lock
     def list_sessions(self, namespace: str, status: str = None) -> List[Dict[str, Any]]:
         if status:
             self.cursor.execute(
@@ -596,6 +624,7 @@ Conversation:
             )
         return [{"id": r[0], "namespace": r[1], "created_at": r[2], "last_active": r[3], "status": r[4]} for r in self.cursor.fetchall()]
 
+    @db_lock
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         self.cursor.execute(
             "SELECT id, namespace, created_at, last_active, status FROM memory_sessions WHERE id=?",
@@ -606,6 +635,7 @@ Conversation:
             return {"id": row[0], "namespace": row[1], "created_at": row[2], "last_active": row[3], "status": row[4]}
         return None
 
+    @db_lock
     def update_session_status(self, session_id: str, status: str) -> bool:
         current_time = int(time.time())
         self.cursor.execute(
@@ -615,6 +645,7 @@ Conversation:
         self.conn.commit()
         return self.cursor.rowcount > 0
 
+    @db_lock
     def link_memory_to_session(self, session_id: str, memory_id: str) -> bool:
         current_time = int(time.time())
         self.cursor.execute(
@@ -628,6 +659,7 @@ Conversation:
         self.conn.commit()
         return True
 
+    @db_lock
     def unlink_memory_from_session(self, session_id: str, memory_id: str) -> bool:
         self.cursor.execute(
             "DELETE FROM session_memories WHERE session_id=? AND memory_id=?",
@@ -636,6 +668,7 @@ Conversation:
         self.conn.commit()
         return self.cursor.rowcount > 0
 
+    @db_lock
     def get_session_memories(self, session_id: str) -> List[Dict[str, Any]]:
         self.cursor.execute(
             "SELECT memory_id, created_at FROM session_memories WHERE session_id=?",
@@ -677,6 +710,7 @@ Conversation:
         packed_content += "</context>"
         return packed_content
 
+    @db_lock
     def delete_session(self, session_id: str) -> bool:
         self.cursor.execute("DELETE FROM session_memories WHERE session_id=?", (session_id,))
         self.cursor.execute("DELETE FROM memory_sessions WHERE id=?", (session_id,))
@@ -687,6 +721,7 @@ Conversation:
     # Knowledge Graph Operations (Graphify Integration)
     # =========================================================
 
+    @db_lock
     def add_edge(self, from_id: str, to_id: str, relation_type: str, confidence: float = 1.0) -> bool:
         current_time = int(time.time())
         self.cursor.execute(
@@ -697,6 +732,7 @@ Conversation:
         self.conn.commit()
         return True
 
+    @db_lock
     def remove_edge(self, from_id: str, to_id: str, relation_type: str) -> bool:
         self.cursor.execute(
             "DELETE FROM memory_edges WHERE from_id=? AND to_id=? AND relation_type=?",
@@ -705,6 +741,7 @@ Conversation:
         self.conn.commit()
         return self.cursor.rowcount > 0
 
+    @db_lock
     def get_neighbors(self, node_id: str, relation_type: str = None, direction: str = "both", limit: int = 50) -> List[Dict[str, Any]]:
         results = []
         if direction in ("out", "both"):
@@ -737,6 +774,7 @@ Conversation:
 
         return results
 
+    @db_lock
     def get_node_detail(self, node_id: str) -> Optional[Dict[str, Any]]:
         """Get a memory node with all its edges."""
         # Get the memory content
@@ -748,6 +786,7 @@ Conversation:
         node["edges"] = self.get_neighbors(node_id)
         return node
 
+    @db_lock
     def shortest_path(self, from_id: str, to_id: str, max_depth: int = 5) -> List[Dict[str, Any]]:
         """BFS shortest path between two memory nodes via edges."""
         from collections import deque
@@ -770,6 +809,8 @@ Conversation:
                 queue.append((nb_id, new_path))
         return []
 
+    @db_lock
+    @db_lock
     def get_graph_stats(self, namespace: str = None) -> Dict[str, Any]:
         if namespace:
             self.cursor.execute("SELECT count(*) FROM memory_fts WHERE namespace=?", (namespace,))
@@ -791,6 +832,7 @@ Conversation:
 
         return {"nodes": node_count, "edges": edge_count, "relation_types": relation_types}
 
+    @db_lock
     def get_graph_data(self, namespace: str, limit: int = 500) -> Dict[str, Any]:
         """Get nodes and edges for graph visualization, capped at limit nodes.
 
@@ -863,6 +905,7 @@ Conversation:
                 
         return {"nodes": nodes, "edges": edges}
 
+    @db_lock
     def import_graph_data(self, nodes: List[Dict], edges: List[Dict], namespace: str) -> Dict[str, int]:
         """Batch import graph nodes (as memories) and edges from Graphify output.
 
@@ -976,6 +1019,7 @@ Conversation:
             print(f"[graph] community detection skipped: {exc}", file=sys.stderr)
             return {}
 
+    @db_lock
     def get_graph_node_meta(self, doc_id: str) -> Optional[Dict[str, Any]]:
         """Fetch graph_nodes metadata row for a given memory id."""
         self.cursor.execute(
@@ -995,6 +1039,7 @@ Conversation:
             "external_id": row[5],
         }
 
+    @db_lock
     def list_communities(self, namespace: Optional[str] = None) -> List[Dict[str, Any]]:
         """Aggregate community_id -> {node_count, edge_count, top_relations}."""
         if namespace:
