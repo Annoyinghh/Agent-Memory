@@ -61,6 +61,7 @@ export default function KnowledgeGraph() {
   const [pathEndNode, setPathEndNode] = useState(null);
   const [foundPath, setFoundPath] = useState(null);
   const [pathLoading, setPathLoading] = useState(false);
+  const [pathMaxDepth, setPathMaxDepth] = useState(5);
   
   // Three.js References for clean animation updates
   const sceneRef = useRef(null);
@@ -214,7 +215,7 @@ export default function KnowledgeGraph() {
     setPathLoading(true);
     setFoundPath(null);
     try {
-      const res = await api.findPath(pathStartNode.id, pathEndNode.id, 5);
+      const res = await api.findPath(pathStartNode.id, pathEndNode.id, pathMaxDepth);
       if (res.found && res.path) {
         setFoundPath(res.path);
         
@@ -1221,6 +1222,21 @@ export default function KnowledgeGraph() {
                   {pathEndNode ? `B: ${pathEndNode.content.substring(0, 8)}...` : '设定终点 B'}
                 </div>
 
+                {/* Max Depth Input */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <label style={{ fontSize: '9px', color: 'rgba(255,187,0,0.7)', whiteSpace: 'nowrap' }}>深度:</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={pathMaxDepth}
+                    onChange={(e) => setPathMaxDepth(Math.max(1, Math.min(20, parseInt(e.target.value) || 5)))}
+                    className="sci-control-input"
+                    style={{ width: '45px', height: '28px', fontSize: '10px', padding: '2px 6px', textAlign: 'center' }}
+                    disabled={pathLoading}
+                  />
+                </div>
+
                 {/* Find path button */}
                 <button
                   type="button"
@@ -1250,7 +1266,7 @@ export default function KnowledgeGraph() {
                   }}
                 >
                   {foundPath.length === 0 ? (
-                    <span style={{ color: '#ef4444' }}>未找到连通的引力路径 (Max Depth: 5)</span>
+                    <span style={{ color: '#ef4444' }}>未找到连通的引力路径 (Max Depth: {pathMaxDepth})</span>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                       <span style={{ color: '#10b981', fontWeight: 'bold' }}>✓ 已打通引力通路:</span>
