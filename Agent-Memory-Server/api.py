@@ -531,7 +531,6 @@ class NeighborRequest(BaseModel):
 class PathRequest(BaseModel):
     from_id: str
     to_id: str
-    max_depth: int = 5
 
 class GraphImportRequest(BaseModel):
     namespace: str
@@ -574,7 +573,7 @@ def get_node_detail(node_id: str):
 
 @app.post("/api/graph/path")
 def shortest_path(req: PathRequest):
-    path = engine.shortest_path(req.from_id, req.to_id, req.max_depth)
+    path = engine.shortest_path(req.from_id, req.to_id)
     return {"from_id": req.from_id, "to_id": req.to_id, "path": path, "found": len(path) > 0}
 
 @app.get("/api/graph/stats")

@@ -454,10 +454,10 @@ export const api = {
    * @param {number} [maxDepth=5]
    * @returns {Promise<{from_id: string, to_id: string, path: Array, found: boolean}>}
    */
-  findPath: (fromId, toId, maxDepth = 5) =>
+  findPath: (fromId, toId) =>
     request('/api/graph/path', {
       method: 'POST',
-      body: JSON.stringify({ from_id: fromId, to_id: toId, max_depth: maxDepth }),
+      body: JSON.stringify({ from_id: fromId, to_id: toId }),
     }),
 
   /**

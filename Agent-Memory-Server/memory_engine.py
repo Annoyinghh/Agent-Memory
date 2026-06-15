@@ -787,16 +787,14 @@ Conversation:
         return node
 
     @db_lock
-    def shortest_path(self, from_id: str, to_id: str, max_depth: int = 5) -> List[Dict[str, Any]]:
-        """BFS shortest path between two memory nodes via edges."""
+    def shortest_path(self, from_id: str, to_id: str) -> List[Dict[str, Any]]:
+        """BFS shortest path between two memory nodes via edges. No depth limit."""
         from collections import deque
         visited = {from_id}
         queue = deque([(from_id, [])])
 
         while queue:
             current, path = queue.popleft()
-            if len(path) >= max_depth:
-                continue
             neighbors = self.get_neighbors(current, limit=100)
             for nb in neighbors:
                 nb_id = nb["id"]
