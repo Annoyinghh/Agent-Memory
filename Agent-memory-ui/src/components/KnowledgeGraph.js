@@ -40,11 +40,13 @@ export default function KnowledgeGraph() {
   // Extract Codebase States
   const [showExtractInput, setShowExtractInput] = useState(false);
   const [extractPath, setExtractPath] = useState('');
+  const [extractNamespace, setExtractNamespace] = useState('');
   const [extracting, setExtracting] = useState(false);
 
   // Import graph.json File States
   const [showImportFileInput, setShowImportFileInput] = useState(false);
   const [importFilePath, setImportFilePath] = useState('');
+  const [importNamespace, setImportNamespace] = useState('');
   const [importingFile, setImportingFile] = useState(false);
 
   // Orbit Control Dial State
@@ -133,17 +135,32 @@ export default function KnowledgeGraph() {
   // Run Graphify extraction on codebase directory
   const handleExtractCodebase = async () => {
     if (!extractPath.trim()) return;
+
+    // Auto-fill namespace from folder name if empty
+    let targetNamespace = extractNamespace.trim();
+    if (!targetNamespace) {
+      const folderName = extractPath.trim().split(/[/\\]/).filter(Boolean).pop();
+      targetNamespace = folderName || 'default';
+    }
+
+    // Prevent using reserved 'all' keyword
+    if (targetNamespace === 'all') {
+      alert('命名空间不能使用保留关键字 "all"，请更换名称。');
+      return;
+    }
+
     setExtracting(true);
     try {
-      const res = await api.extractCodebase(extractPath.trim(), activeNamespace);
+      const res = await api.extractCodebase(extractPath.trim(), targetNamespace);
       setLastEvent({
         type: 'insert',
-        namespace: activeNamespace,
+        namespace: targetNamespace,
         message: `代码库提取完成！导入了 ${res.nodes_imported || 0} 个节点，${res.edges_imported || 0} 条引力链路。`
       });
-      alert(`提取成功！已导入 ${res.nodes_imported || 0} 个知识节点，${res.edges_imported || 0} 条关系链。`);
+      alert(`提取成功！已导入 ${res.nodes_imported || 0} 个知识节点，${res.edges_imported || 0} 条关系链到命名空间 "${targetNamespace}"。`);
       setShowExtractInput(false);
       setExtractPath('');
+      setExtractNamespace('');
       fetchGraph();
     } catch (err) {
       console.error('[KnowledgeGraph] extractCodebase failed:', err);
@@ -156,17 +173,32 @@ export default function KnowledgeGraph() {
   // Import existing graphify graph.json file
   const handleImportGraphFile = async () => {
     if (!importFilePath.trim()) return;
+
+    // Auto-fill namespace from file name if empty
+    let targetNamespace = importNamespace.trim();
+    if (!targetNamespace) {
+      const fileName = importFilePath.trim().split(/[/\\]/).filter(Boolean).pop().replace(/\.json$/i, '');
+      targetNamespace = fileName || 'default';
+    }
+
+    // Prevent using reserved 'all' keyword
+    if (targetNamespace === 'all') {
+      alert('命名空间不能使用保留关键字 "all"，请更换名称。');
+      return;
+    }
+
     setImportingFile(true);
     try {
-      const res = await api.importGraphFile(importFilePath.trim(), activeNamespace);
+      const res = await api.importGraphFile(importFilePath.trim(), targetNamespace);
       setLastEvent({
         type: 'insert',
-        namespace: activeNamespace,
+        namespace: targetNamespace,
         message: `导入 graph.json 完成！导入了 ${res.nodes_imported || 0} 个节点，${res.edges_imported || 0} 条引力链路。`
       });
-      alert(`导入成功！已导入 ${res.nodes_imported || 0} 个知识节点，${res.edges_imported || 0} 条关系链。`);
+      alert(`导入成功！已导入 ${res.nodes_imported || 0} 个知识节点，${res.edges_imported || 0} 条关系链到命名空间 "${targetNamespace}"。`);
       setShowImportFileInput(false);
       setImportFilePath('');
+      setImportNamespace('');
       fetchGraph();
     } catch (err) {
       console.error('[KnowledgeGraph] importGraphFile failed:', err);
@@ -945,30 +977,40 @@ export default function KnowledgeGraph() {
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <label style={{ fontSize: '9px', color: 'rgba(255, 187, 0, 0.8)' }}>代码库目录绝对路径 (Absolute Path):</label>
+                  <input
+                    type="text"
+                    value={extractPath}
+                    onChange={(e) => setExtractPath(e.target.value)}
+                    placeholder="例如: E:/my-project"
+                    className="sci-control-input"
+                    style={{ height: '28px', fontSize: '11px', padding: '4px 8px' }}
+                    disabled={extracting}
+                  />
+                  <label style={{ fontSize: '9px', color: 'rgba(255, 187, 0, 0.8)' }}>命名空间 (留空自动用文件夹名):</label>
+                  <input
+                    type="text"
+                    value={extractNamespace}
+                    onChange={(e) => setExtractNamespace(e.target.value)}
+                    placeholder="留空则使用文件夹名"
+                    className="sci-control-input"
+                    style={{ height: '28px', fontSize: '11px', padding: '4px 8px' }}
+                    disabled={extracting}
+                  />
                   <div style={{ display: 'flex', gap: '6px' }}>
-                    <input
-                      type="text"
-                      value={extractPath}
-                      onChange={(e) => setExtractPath(e.target.value)}
-                      placeholder="例如: E:/my-project"
-                      className="sci-control-input"
-                      style={{ height: '28px', fontSize: '11px', padding: '4px 8px', flex: 1 }}
-                      disabled={extracting}
-                    />
                     <button
                       type="button"
                       onClick={handleExtractCodebase}
                       className="sci-submit-btn bg-cyan"
-                      style={{ height: '28px', fontSize: '11px', padding: '0 12px', minWidth: '50px' }}
+                      style={{ height: '28px', fontSize: '11px', padding: '0 12px', flex: 1 }}
                       disabled={extracting || !extractPath.trim()}
                     >
-                      {extracting ? '...' : '开始'}
+                      {extracting ? '提取中...' : '开始提取'}
                     </button>
                     <button
                       type="button"
-                      onClick={() => { setShowExtractInput(false); setExtractPath(''); }}
+                      onClick={() => { setShowExtractInput(false); setExtractPath(''); setExtractNamespace(''); }}
                       className="wm-edit-btn-inline"
-                      style={{ height: '28px', fontSize: '11px', padding: '0 8px' }}
+                      style={{ height: '28px', fontSize: '11px', padding: '0 12px' }}
                       disabled={extracting}
                     >
                       取消
@@ -990,28 +1032,38 @@ export default function KnowledgeGraph() {
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <label style={{ fontSize: '9px', color: 'rgba(255, 187, 0, 0.8)' }}>graph.json 文件绝对路径 (Absolute Path):</label>
+                  <input
+                    type="text"
+                    value={importFilePath}
+                    onChange={(e) => setImportFilePath(e.target.value)}
+                    placeholder="例如: E:/graphify-out/graph.json"
+                    className="sci-control-input"
+                    style={{ height: '28px', fontSize: '11px', padding: '4px 8px' }}
+                    disabled={importingFile}
+                  />
+                  <label style={{ fontSize: '9px', color: 'rgba(255, 187, 0, 0.8)' }}>命名空间 (留空自动用文件名):</label>
+                  <input
+                    type="text"
+                    value={importNamespace}
+                    onChange={(e) => setImportNamespace(e.target.value)}
+                    placeholder="留空则使用文件名"
+                    className="sci-control-input"
+                    style={{ height: '28px', fontSize: '11px', padding: '4px 8px' }}
+                    disabled={importingFile}
+                  />
                   <div style={{ display: 'flex', gap: '6px' }}>
-                    <input
-                      type="text"
-                      value={importFilePath}
-                      onChange={(e) => setImportFilePath(e.target.value)}
-                      placeholder="例如: E:/graphify-out/graph.json"
-                      className="sci-control-input"
-                      style={{ height: '28px', fontSize: '11px', padding: '4px 8px', flex: 1 }}
-                      disabled={importingFile}
-                    />
                     <button
                       type="button"
                       onClick={handleImportGraphFile}
                       className="sci-submit-btn bg-cyan"
-                      style={{ height: '28px', fontSize: '11px', padding: '0 12px', minWidth: '50px' }}
+                      style={{ height: '28px', fontSize: '11px', padding: '0 12px', flex: 1 }}
                       disabled={importingFile || !importFilePath.trim()}
                     >
-                      {importingFile ? '...' : '开始'}
+                      {importingFile ? '导入中...' : '开始导入'}
                     </button>
                     <button
                       type="button"
-                      onClick={() => { setShowImportFileInput(false); setImportFilePath(''); }}
+                      onClick={() => { setShowImportFileInput(false); setImportFilePath(''); setImportNamespace(''); }}
                       className="wm-edit-btn-inline"
                       style={{ height: '28px', fontSize: '11px', padding: '0 8px' }}
                       disabled={importingFile}

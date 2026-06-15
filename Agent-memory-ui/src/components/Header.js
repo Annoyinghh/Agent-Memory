@@ -44,7 +44,7 @@ export default function Header() {
             className="namespace-select"
           >
             <option value="all">全部命名空间 (All Namespaces)</option>
-            {namespaces.map((ns) => (
+            {namespaces.filter((ns) => ns !== 'all').map((ns) => (
               <option key={ns} value={ns}>
                 {ns}
               </option>

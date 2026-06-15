@@ -371,43 +371,46 @@ def search_memory_get(
 def delete_memory(req: DeleteRequest):
     """按 doc_id 或 source 前缀删除记忆"""
     _check_protected(req.namespace)
-    if req.doc_id:
-        engine.collection.delete(ids=[req.doc_id])
-        engine.cursor.execute("DELETE FROM memory_fts WHERE id = ?", (req.doc_id,))
-        engine.cursor.execute("DELETE FROM memory_edges WHERE from_id = ? OR to_id = ?", (req.doc_id, req.doc_id))
-        engine.conn.commit()
-        return DeleteResponse(deleted_count=1, message="deleted by id")
-    elif req.source_prefix:
-        engine.cursor.execute(
-            "SELECT id FROM memory_fts WHERE source LIKE ?",
-            (f"{req.source_prefix}%",)
-        )
-        ids = [row[0] for row in engine.cursor.fetchall()]
-        if ids:
-            engine.collection.delete(ids=ids)
-            placeholders = ",".join(["?"] * len(ids))
-            engine.cursor.execute(f"DELETE FROM memory_fts WHERE id IN ({placeholders})", ids)
-            engine.cursor.execute(f"DELETE FROM memory_edges WHERE from_id IN ({placeholders}) OR to_id IN ({placeholders})", ids + ids)
+    with engine.lock:
+        if req.doc_id:
+            engine.collection.delete(ids=[req.doc_id])
+            engine.cursor.execute("DELETE FROM memory_fts WHERE id = ?", (req.doc_id,))
+            engine.cursor.execute("DELETE FROM memory_edges WHERE from_id = ? OR to_id = ?", (req.doc_id, req.doc_id))
             engine.conn.commit()
-        return DeleteResponse(deleted_count=len(ids), message=f"deleted by source prefix: {req.source_prefix}")
-    else:
-        raise HTTPException(status_code=400, detail="Must provide doc_id or source_prefix")
+            return DeleteResponse(deleted_count=1, message="deleted by id")
+        elif req.source_prefix:
+            engine.cursor.execute(
+                "SELECT id FROM memory_fts WHERE source LIKE ?",
+                (f"{req.source_prefix}%",)
+            )
+            ids = [row[0] for row in engine.cursor.fetchall()]
+            if ids:
+                engine.collection.delete(ids=ids)
+                placeholders = ",".join(["?"] * len(ids))
+                engine.cursor.execute(f"DELETE FROM memory_fts WHERE id IN ({placeholders})", ids)
+                engine.cursor.execute(f"DELETE FROM memory_edges WHERE from_id IN ({placeholders}) OR to_id IN ({placeholders})", ids + ids)
+                engine.conn.commit()
+            return DeleteResponse(deleted_count=len(ids), message=f"deleted by source prefix: {req.source_prefix}")
+        else:
+            raise HTTPException(status_code=400, detail="Must provide doc_id or source_prefix")
 
 
 @app.get("/api/namespaces", response_model=NamespacesResponse)
 def list_namespaces():
     """列出所有 namespace"""
-    engine.cursor.execute("SELECT DISTINCT namespace FROM memory_fts")
-    return NamespacesResponse(namespaces=[row[0] for row in engine.cursor.fetchall()])
+    with engine.lock:
+        engine.cursor.execute("SELECT DISTINCT namespace FROM memory_fts")
+        return NamespacesResponse(namespaces=[row[0] for row in engine.cursor.fetchall()])
 
 
 @app.get("/api/stats", response_model=StatsResponse)
 def get_stats():
     """统计信息"""
-    total = engine.collection.count()
-    engine.cursor.execute("SELECT namespace, count(*) FROM memory_fts GROUP BY namespace")
-    namespaces = {row[0]: row[1] for row in engine.cursor.fetchall()}
-    return StatsResponse(total_chunks=total, namespaces=namespaces)
+    with engine.lock:
+        total = engine.collection.count()
+        engine.cursor.execute("SELECT namespace, count(*) FROM memory_fts GROUP BY namespace")
+        namespaces = {row[0]: row[1] for row in engine.cursor.fetchall()}
+        return StatsResponse(total_chunks=total, namespaces=namespaces)
 
 
 @app.post("/api/memory/forget", response_model=ForgetResponse)
