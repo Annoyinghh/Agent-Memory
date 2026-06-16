@@ -50,6 +50,15 @@ export default function SPAHomepage() {
   const [packError, setPackError] = useState(null);
   const [copySuccess, setCopySuccess] = useState(false);
 
+  // Precise Source Search states
+  const [sourceQuery, setSourceQuery] = useState('');
+  const [maxResults, setMaxResults] = useState(8);
+  const [contextLines, setContextLines] = useState(4);
+  const [sourceSearchResults, setSourceSearchResults] = useState([]);
+  const [sourceSearchLoading, setSourceSearchLoading] = useState(false);
+  const [sourceSearchSearched, setSourceSearchSearched] = useState(false);
+  const [sourceSearchError, setSourceSearchError] = useState(null);
+
   // Trigger search if namespace changes during search tab active
   useEffect(() => {
     if (activeTab === 'search' && searchQuery.trim() !== '') {
@@ -103,6 +112,31 @@ export default function SPAHomepage() {
       setPackError('组装失败，请检查 API 服务器连接状态');
     } finally {
       setPackLoading(false);
+    }
+  };
+
+  const handleSourceSearchSubmit = async (e) => {
+    if (e) e.preventDefault();
+    if (!sourceQuery.trim()) return;
+
+    setSourceSearchLoading(true);
+    setSourceSearchError(null);
+    setSourceSearchSearched(true);
+    setSourceSearchResults([]);
+
+    try {
+      const res = await api.preciseSourceSearch(activeNamespace, sourceQuery, maxResults, contextLines);
+      setSourceSearchResults(res.results || []);
+      
+      setLastEvent({
+        type: 'search',
+        message: `源码检索就绪！在 [ ${activeNamespace === 'all' ? '全部' : activeNamespace} ] 关联源码中找到了 ${res.results?.length || 0} 处与“${sourceQuery}”匹配的精准代码片段。`
+      });
+    } catch (err) {
+      console.error(err);
+      setSourceSearchError('源码检索失败，请检查 API 服务器连接状态');
+    } finally {
+      setSourceSearchLoading(false);
     }
   };
 
@@ -1004,9 +1038,25 @@ export default function SPAHomepage() {
                   </svg>
                   CONTEXT_PACKER // 上下文打包
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchSubMode('source');
+                    setSourceSearchError(null);
+                  }}
+                  className={`sub-mode-tab-btn ${searchSubMode === 'source' ? 'active' : ''}`}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="2" y="3" width="20" height="14" rx="2" stroke="currentColor" fill="none" />
+                    <line x1="8" y1="21" x2="16" y2="21" stroke="currentColor" />
+                    <line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" />
+                  </svg>
+                  PRECISE_SOURCE_SEARCH // 源码检索
+                </button>
               </div>
 
-              {searchSubMode === 'search' ? (
+              {searchSubMode === 'search' && (
                 <div className="search-tab-layout">
                   <div className="search-left-form">
                     <GlassCard title="检索控制台 (Query Console)" glowColor="cyan" className="op-panel-card">
@@ -1197,7 +1247,9 @@ export default function SPAHomepage() {
                   </div>
                 </div>
               </div>
-              ) : (
+              )}
+
+              {searchSubMode === 'pack' && (
                 <div className="search-tab-layout">
                   <div className="search-left-form">
                     <GlassCard title="上下文打包器 (Context Packer)" glowColor="purple" className="op-panel-card">
@@ -1297,7 +1349,146 @@ export default function SPAHomepage() {
                   </div>
                 </div>
               </div>
-            )}
+              )}
+
+              {searchSubMode === 'source' && (
+                <div className="search-tab-layout">
+                  <div className="search-left-form">
+                    <GlassCard title="源码精准检索 (Source Search Console)" glowColor="purple" className="op-panel-card">
+                      <form onSubmit={handleSourceSearchSubmit} className="sci-form">
+                        <div className="form-group-sci">
+                          <label htmlFor="source-q-input">源码检索内容 (Exact Keyword / Phrase)</label>
+                          <input
+                            id="source-q-input"
+                            type="text"
+                            value={sourceQuery}
+                            onChange={(e) => setSourceQuery(e.target.value)}
+                            placeholder="输入要查找的常量、函数名等精确词汇..."
+                            className="sci-control-input"
+                            required
+                          />
+                        </div>
+
+                        <div className="form-group-sci">
+                          <label htmlFor="source-ns-select">命名空间范围 (Namespace)</label>
+                          <select
+                            id="source-ns-select"
+                            value={activeNamespace}
+                            onChange={(e) => setActiveNamespace(e.target.value)}
+                            className="sci-control-select"
+                          >
+                            <option value="all">全部命名空间 (All)</option>
+                            {namespaces.map((ns) => (
+                              <option key={ns} value={ns}>{ns}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="form-group-sci">
+                          <div className="slider-label-row">
+                            <label htmlFor="maxresults-slider">返回条数上限 (Max Results)</label>
+                            <span className="slider-val text-cyan font-mono">{maxResults}</span>
+                          </div>
+                          <input
+                            id="maxresults-slider"
+                            type="range"
+                            min="1"
+                            max="30"
+                            value={maxResults}
+                            onChange={(e) => setMaxResults(parseInt(e.target.value))}
+                            className="sci-slider"
+                          />
+                        </div>
+
+                        <div className="form-group-sci">
+                          <div className="slider-label-row">
+                            <label htmlFor="contextlines-slider">前后上下文行数 (Context Lines)</label>
+                            <span className="slider-val text-purple font-mono">{contextLines}</span>
+                          </div>
+                          <input
+                            id="contextlines-slider"
+                            type="range"
+                            min="0"
+                            max="10"
+                            value={contextLines}
+                            onChange={(e) => setContextLines(parseInt(e.target.value))}
+                            className="sci-slider"
+                          />
+                        </div>
+
+                        <button type="submit" className="sci-submit-btn bg-purple" disabled={sourceSearchLoading}>
+                          {sourceSearchLoading ? '检索中...' : '开始精准检索'}
+                        </button>
+                      </form>
+                    </GlassCard>
+                  </div>
+                  <div className="search-right-results">
+                    <div className="search-results-wrapper font-mono">
+                      {sourceSearchLoading ? (
+                        <div className="search-status-banner">[ SOURCE_SCAN // 检索源文件特征矩阵中... ]</div>
+                      ) : sourceSearchError ? (
+                        <div className="search-error-banner" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'hsl(var(--color-red))' }}>
+                            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01" />
+                          </svg>
+                          <span>发生错误: {sourceSearchError}</span>
+                        </div>
+                      ) : !sourceSearchSearched ? (
+                        <div className="search-empty-banner" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="inline-svg-glow" style={{ animation: 'pulse 2s infinite' }}>
+                            <rect x="2" y="3" width="20" height="14" rx="2" stroke="hsl(var(--color-cyan))" fill="none" />
+                            <line x1="8" y1="21" x2="16" y2="21" stroke="hsl(var(--color-purple))" strokeWidth="3" />
+                            <line x1="12" y1="17" x2="12" y2="21" stroke="hsl(var(--color-purple))" strokeWidth="3" />
+                          </svg>
+                          <span>READY // 待命。请输入要检索的代码、常数或函数名。</span>
+                        </div>
+                      ) : sourceSearchResults.length === 0 ? (
+                        <div className="search-empty-banner" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'hsl(var(--color-purple))' }}>
+                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" fill="none" />
+                            <path d="M3.27 6.96L12 12.01l8.73-5.05" />
+                            <line x1="12" y1="22.08" x2="12" y2="12" />
+                            <circle cx="12" cy="12" r="3" strokeDasharray="3 3" />
+                          </svg>
+                          <span>EMPTY_RECORD // 未在关联源码中检索到匹配的内容。</span>
+                        </div>
+                      ) : (
+                        <div className="search-results-list">
+                          <div className="results-count-title">精准检索完成: 在源文件中匹配到 {sourceSearchResults.length} 处</div>
+                          {sourceSearchResults.map((item, idx) => (
+                            <GlassCard key={idx} title={`匹配点 #${idx + 1}`} glowColor="purple" className="result-item-card">
+                              <div className="result-item-header" style={{ marginBottom: '6px' }}>
+                                <span className="source-lbl" style={{ color: 'hsl(var(--color-cyan))', fontSize: '11px', overflowWrap: 'anywhere' }}>
+                                  📂 {item.source_file} : Line {item.line}
+                                </span>
+                              </div>
+                              <div className="result-item-body">
+                                <pre className="result-code" style={{ whiteSpace: 'pre-wrap', fontSize: '11px' }}>{item.snippet}</pre>
+                              </div>
+                              <div className="result-item-footer" style={{ marginTop: '8px' }}>
+                                <span className="source-lbl" style={{ fontSize: '10px', color: 'hsl(var(--text-muted))' }}>
+                                  匹配词: {item.matched_terms.join(', ')}
+                                </span>
+                                <button
+                                  type="button"
+                                  className="copy-prompt-btn"
+                                  style={{ padding: '2px 8px', fontSize: '10px' }}
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(item.snippet);
+                                    alert('已复制匹配的代码片段！');
+                                  }}
+                                >
+                                  复制片段
+                                </button>
+                              </div>
+                            </GlassCard>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -2237,11 +2428,14 @@ export default function SPAHomepage() {
                       <li>交互式 Swagger 接口文档：<a href="http://127.0.0.1:8900/docs" target="_blank" rel="noreferrer" className="text-cyan" style={{ textDecoration: 'underline' }}>http://127.0.0.1:8900/docs</a></li>
                       <li>MCP (Model Context Protocol) 协议接口：脚本文件位于 <code className="text-white">Agent-Memory-Server/server.py</code>，已注册供 Antigravity IDE 和 Claude Code 命令行工具使用。</li>
                       <li>
-                        <strong>如何在 Claude Code (CLI) 里面直接调用：</strong>
+                        <strong>如何在 Claude Code (CLI) / Antigravity IDE 里面直接调用：</strong>
                         <div style={{ background: 'rgba(0,0,0,0.35)', padding: '10px', borderRadius: '8px', marginTop: '6px', borderLeft: '3px solid hsl(var(--color-cyan))', border: '1px solid rgba(255, 187, 0, 0.15)', lineHeight: '1.7' }}>
-                          重启 <code>claude</code> CLI 后，直接用普通人类语言对它下达记忆指令即可触发，例如：<br/>
+                          重启 <code>claude</code> CLI 后，直接用普通人类语言对它下达指令即可触发对应的 MCP 工具，例如：<br/>
                           - <strong>添加长期记忆：</strong> <code>记住我在这个项目的开发偏好：所有后端 API 的超时时间都是 15s</code><br/>
                           - <strong>跨会话查询：</strong> <code>帮我查一下之前记录的后端 API 偏好有哪些</code><br/>
+                          - <strong>精确源码检索：</strong> <code>在项目源码里检索 'dedup_threshold' 的定义和使用处</code> (此操作会触发 <code>precise_source_search</code> 工具，在已导入图谱节点关联的所有源文件内进行精准上下文定位)<br/>
+                          - <strong>清空命名空间图谱：</strong> <code>清空命名空间 'myproject' 的全部数据</code> (触发 <code>clear_namespace</code>，瞬间清除该分区的节点与关联链路)<br/>
+                          - <strong>同步重建代码库：</strong> <code>重新同步 'E:/my-project' 到命名空间 'myproject'</code> (触发 <code>sync_codebase</code>，执行先清空再重新提取。大库可能耗时过长，建议直接在前端罗盘控制台勾选“同步重建”运行)<br/>
                           - <strong>读写工作记忆：</strong> <code>把临时变量 current_branch 记录为 feature/auth</code><br/>
                           - <strong>分析星系图谱：</strong> <code>查看当前记忆图谱的统计信息</code>
                         </div>

@@ -42,6 +42,7 @@ export default function KnowledgeGraph() {
   const [extractPath, setExtractPath] = useState('');
   const [extractNamespace, setExtractNamespace] = useState('');
   const [extracting, setExtracting] = useState(false);
+  const [extractRebuild, setExtractRebuild] = useState(false);
   const [extractProgress, setExtractProgress] = useState({ stage: '', current: 0, total: 0, message: '', percent: 0 });
 
   // Import graph.json File States
@@ -75,6 +76,7 @@ export default function KnowledgeGraph() {
   const edgesGroupRef = useRef(null);
   const orbitGroupRef = useRef(null);
   const coreRef = useRef(null);
+  const packetsRef = useRef([]);
   
   // Cache node objects to update connection line positions easily
   const nodeMeshesRef = useRef([]);
@@ -201,7 +203,7 @@ export default function KnowledgeGraph() {
 
     try {
       // Submit task - returns immediately with task_id
-      const taskRes = await api.extractCodebase(extractPath.trim(), targetNamespace);
+      const taskRes = await api.extractCodebase(extractPath.trim(), targetNamespace, extractRebuild);
       const taskId = taskRes.task_id;
 
       if (!taskId) {
@@ -211,6 +213,7 @@ export default function KnowledgeGraph() {
       setShowExtractInput(false);
       setExtractPath('');
       setExtractNamespace('');
+      setExtractRebuild(false);
 
       // Poll until complete
       await pollTaskUntilComplete(
@@ -239,6 +242,7 @@ export default function KnowledgeGraph() {
       alert(`提交提取任务失败: ${err.message || err}`);
       setExtractProgress({ stage: '', current: 0, total: 0, message: '', percent: 0 });
       setExtracting(false);
+      setExtractRebuild(false);
     }
   };
 
@@ -302,6 +306,35 @@ export default function KnowledgeGraph() {
       alert(`提交导入任务失败: ${err.message || err}`);
       setImportProgress({ stage: '', current: 0, total: 0, message: '', percent: 0 });
       setImportingFile(false);
+    }
+  };
+
+  // Clear Graph Namespace (Wipe all nodes, edges, vectors)
+  const handleClearNamespace = async () => {
+    if (activeNamespace === 'all') {
+      alert('请先在顶部选择一个具体的命名空间再进行清空操作。');
+      return;
+    }
+    if (!confirm(`警告：确定要彻底清空命名空间 "${activeNamespace}" 的所有图谱节点、边和向量吗？此操作不可逆！`)) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await api.clearGraph(activeNamespace);
+      setLastEvent({
+        type: 'delete',
+        namespace: activeNamespace,
+        message: `清空完成！已从命名空间 "${activeNamespace}" 中擦除 ${res.deleted_count || 0} 个节点及所有关联链路。`
+      });
+      await refreshData();
+      await fetchGraph();
+      alert(`命名空间 "${activeNamespace}" 清空成功，共删除 ${res.deleted_count || 0} 个节点。`);
+    } catch (err) {
+      console.error('[KnowledgeGraph] clearGraph failed:', err);
+      alert(`清空失败: ${err.message || err}`);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -889,6 +922,63 @@ export default function KnowledgeGraph() {
       edgesGroup.add(line);
     });
 
+    // Clear old packets if any
+    if (packetsRef.current && packetsRef.current.length > 0) {
+      packetsRef.current.forEach(p => {
+        scene.remove(p.mesh);
+        p.mesh.geometry.dispose();
+        p.mesh.material.dispose();
+      });
+      packetsRef.current = [];
+    }
+
+    // Create floating data packets along edges
+    const newPackets = [];
+    const packetGeo = new THREE.SphereGeometry(0.045, 8, 8);
+    const packetMat = new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0.9,
+      blending: THREE.AdditiveBlending
+    });
+
+    const maxPackets = Math.min(45, edges.length);
+    for (let pIdx = 0; pIdx < maxPackets; pIdx++) {
+      const edge = edges[pIdx];
+      const srcMesh = idToMesh[edge.source];
+      const destMesh = idToMesh[edge.target];
+      if (srcMesh && destMesh) {
+        const isEdgeOnPath = foundPath?.some(step => 
+          (step.from === edge.source && step.to === edge.target) ||
+          (step.from === edge.target && step.to === edge.source)
+        );
+        const edgeColor = isEdgeOnPath ? 0x10b981 : relationColorOf(edge.relation);
+        
+        const pMesh = new THREE.Mesh(packetGeo, packetMat.clone());
+        pMesh.material.color.setHex(edgeColor);
+        scene.add(pMesh);
+        
+        newPackets.push({
+          mesh: pMesh,
+          sourceId: edge.source,
+          targetId: edge.target,
+          progress: Math.random(),
+          speed: 0.18 + Math.random() * 0.22
+        });
+      }
+    }
+    packetsRef.current = newPackets;
+
+    return () => {
+      if (packetsRef.current && packetsRef.current.length > 0) {
+        packetsRef.current.forEach(p => {
+          scene.remove(p.mesh);
+          p.mesh.geometry.dispose();
+          p.mesh.material.dispose();
+        });
+        packetsRef.current = [];
+      }
+    };
+
   }, [graphData, layoutMode, searchQuery, relationFilter, foundPath, pathStartNode, pathEndNode]);
 
   // Main Render Loop (Orbital revolution, camera panning, raycasting)
@@ -957,6 +1047,25 @@ export default function KnowledgeGraph() {
           line.geometry.attributes.position.needsUpdate = true;
         }
       });
+
+      // Update flying data packets to travel along edge paths
+      if (packetsRef.current && nodesGroup) {
+        packetsRef.current.forEach((p) => {
+          const srcMesh = nodesGroup.children.find(m => m.userData.id === p.sourceId);
+          const destMesh = nodesGroup.children.find(m => m.userData.id === p.targetId);
+          
+          if (srcMesh && destMesh) {
+            p.progress += delta * p.speed;
+            if (p.progress >= 1.0) {
+              p.progress = 0.0;
+            }
+            p.mesh.position.lerpVectors(srcMesh.position, destMesh.position, p.progress);
+            p.mesh.visible = true;
+          } else {
+            p.mesh.visible = false;
+          }
+        });
+      }
 
       // 3. Hover Interaction checking (Raycaster)
       raycaster.setFromCamera(mouseRef.current, camera);
@@ -1093,6 +1202,19 @@ export default function KnowledgeGraph() {
                     style={{ height: '28px', fontSize: '11px', padding: '4px 8px' }}
                     disabled={extracting}
                   />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', margin: '4px 0' }}>
+                    <input
+                      id="extract-rebuild-checkbox"
+                      type="checkbox"
+                      checked={extractRebuild}
+                      onChange={(e) => setExtractRebuild(e.target.checked)}
+                      style={{ cursor: 'pointer' }}
+                      disabled={extracting}
+                    />
+                    <label htmlFor="extract-rebuild-checkbox" style={{ fontSize: '10px', color: 'rgba(255, 255, 255, 0.7)', cursor: 'pointer' }}>
+                      同步重建 (先清空已存在的数据)
+                    </label>
+                  </div>
                   <div style={{ display: 'flex', gap: '6px' }}>
                     <button
                       type="button"
@@ -1101,11 +1223,11 @@ export default function KnowledgeGraph() {
                       style={{ height: '28px', fontSize: '11px', padding: '0 12px', flex: 1 }}
                       disabled={extracting || !extractPath.trim()}
                     >
-                      {extracting ? '提取中...' : '开始提取'}
+                      {extracting ? '提取中...' : (extractRebuild ? '清空并同步重建' : '开始提取')}
                     </button>
                     <button
                       type="button"
-                      onClick={() => { setShowExtractInput(false); setExtractPath(''); setExtractNamespace(''); }}
+                      onClick={() => { setShowExtractInput(false); setExtractPath(''); setExtractNamespace(''); setExtractRebuild(false); }}
                       className="wm-edit-btn-inline"
                       style={{ height: '28px', fontSize: '11px', padding: '0 12px' }}
                       disabled={extracting}
@@ -1212,6 +1334,31 @@ export default function KnowledgeGraph() {
                   )}
                 </div>
               )}
+
+              {/* Divider if showing input */}
+              {(showExtractInput || showImportFileInput) ? <div style={{ borderTop: '1px dashed rgba(255, 187, 0, 0.15)', margin: '4px 0' }} /> : null}
+
+              {/* Clear Namespace Button */}
+              <button
+                type="button"
+                onClick={handleClearNamespace}
+                className="sci-submit-btn"
+                style={{
+                  width: '100%',
+                  height: '30px',
+                  fontSize: '11px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  borderColor: 'hsl(var(--color-red))',
+                  color: 'hsl(var(--color-red))',
+                  background: 'rgba(255, 59, 48, 0.08)'
+                }}
+                disabled={extracting || importingFile}
+              >
+                🧹 清空当前命名空间 (Clear Namespace)
+              </button>
             </div>
 
             {/* Orbit Controls Toggle */}

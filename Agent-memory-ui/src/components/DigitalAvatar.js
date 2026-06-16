@@ -336,6 +336,12 @@ export default function DigitalAvatar() {
     let tiaraCrown = null;
     let tiaraPendant = null;
 
+    // Rotating Sci-Fi HUD Rings references
+    let hudGroup = null;
+    let ring1 = null;
+    let ring2 = null;
+    let ring3 = null;
+
     // Load glTF model dynamically to avoid Next.js SSR build errors
     import('three/examples/jsm/loaders/GLTFLoader').then(({ GLTFLoader }) => {
       const loader = new GLTFLoader();
@@ -659,9 +665,15 @@ export default function DigitalAvatar() {
                 
                 // Add a dynamic energy ripple along the face's Y coordinates
                 float pulse = sin(vPosition.y * 4.0 - uTime * 3.0) * 0.5 + 0.5;
-                vec3 pulseColor = mix(glowColor, vec3(0.0, 1.0, 0.85), pulse * 0.3);
+                vec3 pulseColor = mix(glowColor, vec3(1.0, 0.73, 0.0), pulse * 0.35);
+                
+                // Razor-sharp scanning laser band sweeping up and down
+                float scanCycle = sin(uTime * 1.2) * 1.0;
+                float scanDist = abs(vPosition.y - scanCycle);
+                float scanGlow = exp(-scanDist * 16.0);
                 
                 vec3 finalColor = mix(innerColor, pulseColor, intensity);
+                finalColor = mix(finalColor, vec3(1.0, 0.73, 0.0), scanGlow * 0.65);
                 
                 float alpha = mix(opacity * 0.45, opacity, intensity);
                 if (vPosition.y < bottomY + fadeRange) {
@@ -708,8 +720,16 @@ export default function DigitalAvatar() {
                 // Bright cyan energy wave sweep
                 vColor = mix(aColor, vec3(0.1, 0.95, 1.0), wave * 0.28);
                 
+                // Razor-sharp scanning laser band sweeping up and down
+                float scanCycle = sin(uTime * 1.2) * 1.0;
+                float scanDist = abs(position.y - scanCycle);
+                float scanGlow = exp(-scanDist * 16.0);
+                
+                // Mix in bright cyber gold scanner line
+                vColor = mix(vColor, vec3(1.0, 0.73, 0.0), scanGlow * 0.75);
+                
                 vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-                gl_PointSize = uSize * (300.0 / -mvPosition.z);
+                gl_PointSize = uSize * (300.0 / -mvPosition.z) * (1.0 + scanGlow * 0.65);
                 gl_Position = projectionMatrix * mvPosition;
               }
             `,
@@ -761,7 +781,7 @@ export default function DigitalAvatar() {
                 if (vVisibility < 0.5) {
                   discard;
                 }
-                gl_FragColor = vec4(vColor, 0.42);
+                gl_FragColor = vec4(vColor, 0.30);
               }
             `,
             wireframe: true,
@@ -770,8 +790,8 @@ export default function DigitalAvatar() {
             depthTest: true,
             blending: THREE.AdditiveBlending
           });
-          // headWireframe = new THREE.Mesh(headGeometry, lineShaderMaterial);
-          // scene.add(headWireframe);
+          headWireframe = new THREE.Mesh(headGeometry, lineShaderMaterial);
+          scene.add(headWireframe);
 
           // Create ambient data dust (floating digital memory particles)
           const dustCount = 120;
@@ -872,6 +892,52 @@ export default function DigitalAvatar() {
           tiaraGroup.add(tiaraPendant);
           
           scene.add(tiaraGroup);
+
+          // Create Rotating Sci-Fi HUD Rings
+          hudGroup = new THREE.Group();
+
+          // Horizontal gold scan base ring (neck level)
+          const ringGeo1 = new THREE.RingGeometry(1.25, 1.28, 64);
+          const ringMat1 = new THREE.MeshBasicMaterial({
+            color: 0xffaa00, // Cyber Gold
+            transparent: true,
+            opacity: 0.35,
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending
+          });
+          ring1 = new THREE.Mesh(ringGeo1, ringMat1);
+          ring1.rotation.x = Math.PI / 2;
+          ring1.position.y = -0.65;
+          hudGroup.add(ring1);
+
+          // Tilted glowing cyan orbit ring
+          const ringGeo2 = new THREE.RingGeometry(1.5, 1.515, 64);
+          const ringMat2 = new THREE.MeshBasicMaterial({
+            color: 0x00f2fe, // Cyan
+            transparent: true,
+            opacity: 0.22,
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending
+          });
+          ring2 = new THREE.Mesh(ringGeo2, ringMat2);
+          ring2.rotation.x = Math.PI / 3.2;
+          ring2.rotation.y = Math.PI / 6;
+          hudGroup.add(ring2);
+
+          // Outer vertical rotating gold ring
+          const ringGeo3 = new THREE.RingGeometry(1.75, 1.765, 64);
+          const ringMat3 = new THREE.MeshBasicMaterial({
+            color: 0xffbb00, // Bright Gold
+            transparent: true,
+            opacity: 0.18,
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending
+          });
+          ring3 = new THREE.Mesh(ringGeo3, ringMat3);
+          ring3.rotation.y = Math.PI / 2;
+          hudGroup.add(ring3);
+
+          scene.add(hudGroup);
  
           // Start loop
           animate();
@@ -928,8 +994,8 @@ export default function DigitalAvatar() {
       // Interact with mouse occasionally (natural glance breathing)
       // Oscillate glance interest between 0.0 (focused forward) and 1.0 (looking at mouse)
       const glanceWeight = isCollapsed ? 0 : Math.max(0.0, Math.sin(time * 0.3) * 0.8 + 0.2); 
-      const targetRotX = isCollapsed ? 0 : -mouse.y * 0.25 * glanceWeight + floatTiltX;
-      const targetRotY = isCollapsed ? 0 : mouse.x * 0.30 * glanceWeight;
+      const targetRotX = isCollapsed ? 0 : -mouse.y * 0.08 * glanceWeight + floatTiltX;
+      const targetRotY = isCollapsed ? 0 : mouse.x * 0.10 * glanceWeight;
       const targetRotZ = isCollapsed ? 0 : floatTiltZ;
 
       const lerpSpeed = 0.035; // slower, natural, weighted look-at rotation
@@ -1063,6 +1129,17 @@ export default function DigitalAvatar() {
         }
       }
 
+      // Sync rotating HUD rings
+      if (hudGroup && headPoints) {
+        hudGroup.position.copy(headPoints.position);
+        hudGroup.rotation.copy(headPoints.rotation);
+        
+        // Spin the rings in different directions
+        if (ring1) ring1.rotation.z = time * 0.4;
+        if (ring2) ring2.rotation.z = -time * 0.25;
+        if (ring3) ring3.rotation.x = time * 0.15;
+      }
+
       // Animate ambient data dust particles (rising quantum memory dust)
       if (dustPoints && dustGeometry) {
         const positions = dustGeometry.attributes.position.array;
@@ -1131,6 +1208,12 @@ export default function DigitalAvatar() {
       if (headPoints) headPoints.material.dispose();
       if (headWireframe) headWireframe.material.dispose();
       if (headSolid) headSolid.material.dispose();
+      if (hudGroup) {
+        hudGroup.traverse(child => {
+          if (child.geometry) child.geometry.dispose();
+          if (child.material) child.material.dispose();
+        });
+      }
     };
   }, []);
 
@@ -1144,8 +1227,6 @@ export default function DigitalAvatar() {
       }}
       style={{ cursor: activeTab === 'graph' ? 'pointer' : 'default' }}
     >
-      <div className="scanner-line"></div>
-      
       {/* Symmetrical Sci-fi corner brackets inside panels */}
       <div className="sci-corner corner-tr"></div>
       <div className="sci-corner corner-bl"></div>
@@ -1236,24 +1317,7 @@ export default function DigitalAvatar() {
           border-top: none;
         }
 
-        .scanner-line {
-          position: absolute;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 2px;
-          background: linear-gradient(90deg, transparent, hsl(var(--color-cyan)), transparent);
-          box-shadow: 0 0 15px hsl(var(--color-cyan));
-          animation: scan-down 6s linear infinite;
-          opacity: 0.3;
-          z-index: 5;
-          pointer-events: none;
-        }
-
-        @keyframes scan-down {
-          0% { top: -5%; }
-          100% { top: 105%; }
-        }
+        /* scanner line removed since 3D shader scanner is used */
 
         .canvas-container {
           width: 100%;
@@ -1280,8 +1344,7 @@ export default function DigitalAvatar() {
           margin-top: auto;
         }
 
-        .avatar-panel.graph-collapsed .sci-corner,
-        .avatar-panel.graph-collapsed .scanner-line {
+        .avatar-panel.graph-collapsed .sci-corner {
           display: none;
         }
 

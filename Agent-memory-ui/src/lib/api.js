@@ -592,12 +592,24 @@ export const api = {
    * Run Graphify extraction on a directory - returns task ID immediately (background task)
    * @param {string} targetDir - Directory to extract
    * @param {string} namespace - Target namespace
+   * @param {boolean} [rebuild=false] - Whether to clear the namespace first
    * @returns {Promise<{task_id: string, namespace: string, message: string}>}
    */
-  extractCodebase: (targetDir, namespace) =>
+  extractCodebase: (targetDir, namespace, rebuild = false) =>
     request('/api/graph/extract', {
       method: 'POST',
-      body: JSON.stringify({ target_dir: targetDir, namespace }),
+      body: JSON.stringify({ target_dir: targetDir, namespace, rebuild }),
+    }),
+
+  /**
+   * Clear all graph data (nodes + edges + vectors) for a namespace
+   * @param {string} namespace
+   * @returns {Promise<{deleted_count: number, message: string}>}
+   */
+  clearGraph: (namespace) =>
+    request('/api/graph/clear', {
+      method: 'POST',
+      body: JSON.stringify({ namespace }),
     }),
 
   /**
@@ -628,5 +640,19 @@ export const api = {
   getGraphData: (namespace) =>
     request(`/api/graph/data?namespace=${encodeURIComponent(namespace)}`, {
       method: 'GET',
+    }),
+
+  /**
+   * Exact line-level search over source files referenced by imported graph nodes
+   * @param {string} namespace
+   * @param {string} query
+   * @param {number} [maxResults=8]
+   * @param {number} [contextLines=4]
+   * @returns {Promise<{namespace, query, results: Array}>}
+   */
+  preciseSourceSearch: (namespace, query, maxResults = 8, contextLines = 4) =>
+    request('/api/graph/source-search', {
+      method: 'POST',
+      body: JSON.stringify({ namespace, query, max_results: maxResults, context_lines: contextLines }),
     }),
 };
