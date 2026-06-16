@@ -30,6 +30,7 @@ def parse_graphify_json(data: dict):
                 "label": n.get("label", ""),
                 "content": n.get("label", ""),
                 "source_file": n.get("source_file", ""),
+                "source_location": n.get("source_location", ""),
                 "file_type": n.get("file_type", "code"),
                 "community": n.get("community"),
             })

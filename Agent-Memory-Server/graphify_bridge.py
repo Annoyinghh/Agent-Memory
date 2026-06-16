@@ -57,11 +57,14 @@ def extract_to_memory(target_dir: str, namespace: str, db_dir: str = "./data", p
 
     for n in raw_nodes:
         if isinstance(n, dict):
+            source_file = n.get("source_file", "")
             nodes.append({
                 "id": n.get("id", ""),
                 "label": n.get("label", ""),
                 "content": n.get("label", ""),
-                "source_file": n.get("source_file", ""),
+                "source_file": source_file,
+                "source_location": n.get("source_location", ""),
+                "source_root": str(target),
                 "file_type": n.get("file_type", "code"),
             })
 
@@ -128,6 +131,7 @@ def import_from_graph_json(graph_path: str, namespace: str, db_dir: str = "./dat
                 "label": n.get("label", ""),
                 "content": n.get("label", ""),
                 "source_file": n.get("source_file", ""),
+                "source_location": n.get("source_location", ""),
                 "file_type": n.get("file_type", "code"),
             })
 
