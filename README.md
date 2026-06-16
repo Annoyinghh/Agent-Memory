@@ -108,6 +108,10 @@ python server.py
 | `get_node_detail(node_id)` | 获取节点详情 |
 | `find_path(from_id, to_id, max_depth)` | 最短路径查找 |
 | `graph_stats(namespace?)` | 图谱统计 |
+| `project_overview()` | **一次性识别项目**：列出所有 namespace 的节点/边数、类型、token 估算与样本（调用其他工具前先用它定位，避免去翻数据库文件） |
+| `precise_source_search(namespace, query, max_results?, context_lines?)` | 在已导入的源码中精确搜索关键词/常量/API 片段（摘要不够细时用） |
+| `clear_namespace(namespace)` | 清空整个 namespace 的图谱（节点+边+向量）。重新提取前调用，避免重复堆积 |
+| `sync_codebase(target_dir, namespace)` | **同步更新代码库**：先清空再重新提取（同步执行，慢；超大库建议改用 REST 后台任务） |
 | `import_graph(namespace, nodes_json, edges_json)` | 批量导入图谱 |
 
 ## REST API
@@ -152,8 +156,10 @@ python server.py
 | GET | `/api/graph/stats` | 图谱统计（节点数、边数、关系类型） |
 | GET | `/api/graph/data?namespace=` | 获取图谱全量数据（可视化用） |
 | POST | `/api/graph/import` | 批量导入图谱数据 |
-| POST | `/api/graph/extract` | Graphify AST 提取并导入 |
-| POST | `/api/graph/import-file` | 导入已有 graph.json 文件 |
+| POST | `/api/graph/extract` | Graphify AST 提取并导入（**后台任务**，返回 `task_id`；带 `rebuild=true` 时先清空再提取） |
+| POST | `/api/graph/clear` | 清空 namespace 的整个图谱（节点+边+向量），用于同步前清理 |
+| GET | `/api/tasks/{task_id}` | 查询后台任务进度（提取/导入的状态、stage、百分比、结果） |
+| POST | `/api/graph/import-file` | 导入已有 graph.json 文件（后台任务） |
 | POST | `/api/namespaces/protect` | 保护命名空间（只读） |
 | POST | `/api/namespaces/unprotect` | 解除命名空间保护 |
 | GET | `/api/namespaces/protected` | 列出所有受保护的命名空间 |
@@ -228,6 +234,67 @@ curl -X POST http://127.0.0.1:8900/api/graph/import-file \
   -d '{"graph_path": "graph.json", "namespace": "myproject"}'
 ```
 
+## 代码库同步 (Sync / Rebuild)
+
+> ⚠️ **重要**：`import_graph_data` 给每个节点生成新的 uuid，不按文件路径去重。**直接对同一 namespace 再提取一次 = 图谱翻倍（旧节点全部保留 + 新节点叠上去）**，不是更新。
+>
+> 因此「项目更新了同步一下」的正确做法是：**先清空旧图，再重新提取**（替换而非叠加）。
+
+### 方式一：REST 后台任务（推荐，带进度，不超时）
+
+```bash
+# 1. 提交同步任务（rebuild=true 会先清空该 namespace 再重新提取）
+curl -X POST http://127.0.0.1:8900/api/graph/extract \
+  -H "Content-Type: application/json" \
+  -d '{"target_dir": "E:/my-project", "namespace": "myproject", "rebuild": true}'
+# => {"task_id": "...", "namespace": "myproject", "message": "同步任务已创建（先清空再重新提取）"}
+
+# 2. 轮询任务进度（前端每秒一次）
+curl http://127.0.0.1:8900/api/tasks/<task_id>
+# => {"status": "running", "stage": "chroma", "current": 4800, "total": 9530, "percent": 50, ...}
+```
+
+进度的 `stage` 依次为：`clear`（清空旧图）→ `collect` → `extract`（AST）→ `parse` → `prepare` → `sqlite` → `chroma`（向量化，最慢）→ `edges` → `community` → `metadata` → `complete`。
+
+只清空不重新提取（手动分两步）：
+
+```bash
+curl -X POST http://127.0.0.1:8900/api/graph/clear \
+  -H "Content-Type: application/json" \
+  -d '{"namespace": "myproject"}'
+# => {"deleted_count": 9530, "message": "cleared namespace 'myproject'"}
+```
+
+### 方式二：MCP（在 AI 终端直接同步）
+
+```text
+# 一键同步（清空 + 重新提取，同步执行）
+sync_codebase(target_dir="E:/my-project", namespace="myproject")
+
+# 或只清空，再用别的方式导入
+clear_namespace(namespace="myproject")
+
+# 同步后用 project_overview 确认结果
+project_overview()
+```
+
+> ⚠️ MCP 的 `sync_codebase` 是**同步阻塞**调用，会重新 AST 解析 + 向量化整棵树，超大库可能超过 MCP 工具调用超时。**超大库请改用方式一的 REST 后台任务**（异步、有进度、不超时）。MCP 工具内部已把提取进度输出重定向到 stderr，不会破坏 stdio 的 JSON-RPC 协议。
+
+### 同步还是慢？
+
+全量 rebuild 仍会对**所有文件重新向量化**（耗时主因）。真正的「只同步改动文件」（按 mtime 增量比对）尚未实现；对「项目改完同步一下」的场景，全量 rebuild 已够用且正确。
+
+## 设计要点与常见问题
+
+| 要点 | 说明 |
+|------|------|
+| **数据库路径锚定** | `MemoryEngine` 把默认 `data/` 解析为**脚本所在目录**下的绝对路径，确保 REST / MCP / CLI 三个入口读写**同一份**数据库，不受 cwd 影响。不会再生成空的 `./data`。 |
+| **大规模导入用后台任务** | `extract` / `import-file` 不再用 SSE（长连接易超时、断线后后台仍传输），改为**后台线程 + `task_id` 轮询**。前端按秒轮询 `/api/tasks/{task_id}`，断线不丢任务。 |
+| **Chroma 句柄自愈** | rebuild 由另一个进程清空+重灌磁盘，长期存活的 MCP 进程内存映射的 HNSW 索引可能与磁盘不一致、`collection.query` 抛 "Error finding id"。`hybrid_search` 的查询已加 **失败→重开 client→重试一次** 的自愈逻辑（`_safe_chroma_query`），rebuild 后无需重启即可继续检索。 |
+| **同步前先清空** | 重新提取同一 namespace 必须先 `clear`，否则节点翻倍（见上文 Sync 章节）。 |
+| **修改 MCP 工具后需重启** | 改了 `server.py` 后，在 Claude Code 执行 `/mcp` 重启 `agent-memory`（或重进），新工具/新路径才在其他终端生效。 |
+| **保护命名空间** | 设为只读的 namespace 拒绝写入/删除/清空；同步前确保目标 namespace 未被保护。 |
+
 ## 检索算法
 
 混合检索按以下步骤计算最终得分：
@@ -244,15 +311,18 @@ curl -X POST http://127.0.0.1:8900/api/graph/import-file \
 
 ```
 Agent-Memory/
-├── start.bat                    # 一键启动脚本
+├── start.bat                    # 一键启动脚本（启动 API + UI）
+├── stop.bat                     # 一键停止脚本（杀进程树，释放端口与 sqlite 锁）
 ├── Agent-Memory-Server/         # Python 后端
-│   ├── memory_engine.py         # 核心引擎（双存储 + 混合检索 + 图谱）
-│   ├── api.py                   # FastAPI REST 服务
-│   ├── server.py                # MCP Server
-│   ├── graphify_bridge.py       # Graphify 提取桥接器
+│   ├── memory_engine.py         # 核心引擎（双存储 + 混合检索 + 图谱 + clear_namespace）
+│   ├── api.py                   # FastAPI REST 服务（含后台任务 + rebuild 同步）
+│   ├── server.py                # MCP Server（含 project_overview / sync_codebase / clear_namespace）
+│   ├── task_manager.py          # 后台任务管理（提取/导入的进度跟踪）
+│   ├── graphify_bridge.py       # Graphify 提取桥接器（带进度回调）
 │   ├── graph_adapter.py         # 图谱 JSON 导入适配器
 │   ├── chunker.py               # 文本分块器
 │   ├── ingest.py                # 批量文件导入
+│   ├── rebuild_namespace.py     # 命名空间重建 CLI（清空 + 重新提取）
 │   ├── requirements.txt         # Python 依赖
 │   └── data/                    # 运行时数据目录
 │       ├── chroma_db/           # 向量数据库
