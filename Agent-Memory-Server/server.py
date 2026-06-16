@@ -355,6 +355,23 @@ def get_node_detail(node_id: str) -> str:
     return json.dumps(node, indent=2, ensure_ascii=False)
 
 @mcp.tool()
+def precise_source_search(namespace: str, query: str, max_results: int = 8, context_lines: int = 4) -> str:
+    """
+    Search exact terms inside source files already referenced by imported graph nodes.
+    Use this after project_overview/hybrid_search/pack_context when summaries are not
+    detailed enough for formulas, constants, API request bodies, or line-level code.
+    Args:
+        namespace: The project namespace to search within, or 'all'.
+        query: Exact keyword or phrase to find in indexed source files.
+        max_results: Maximum snippets to return.
+        context_lines: Lines of context before and after each match.
+    """
+    results = engine.precise_source_search(namespace, query, max_results, context_lines)
+    if not results:
+        return f"No indexed source snippets found for query '{query}' in namespace '{namespace}'."
+    return json.dumps(results, indent=2, ensure_ascii=False)
+
+@mcp.tool()
 def find_path(from_id: str, to_id: str, max_depth: int = 5) -> str:
     """
     Find the shortest path between two memory nodes through graph edges.
@@ -406,6 +423,56 @@ def import_graph(nodes: str, edges: str, namespace: str) -> str:
     edge_list = _json.loads(edges)
     result = engine.import_graph_data(node_list, edge_list, namespace)
     return f"Imported {result['nodes_imported']} nodes and {result['edges_imported']} edges into namespace '{namespace}'."
+
+
+@mcp.tool()
+def clear_namespace(namespace: str) -> str:
+    """
+    Wipe ALL nodes, edges, and vectors for a namespace.
+    Call this BEFORE re-importing an updated codebase so the new extraction
+    doesn't pile duplicates on top of the old graph. Fast (no re-embedding).
+    Args:
+        namespace: The project namespace to clear entirely.
+    """
+    deleted = engine.clear_namespace(namespace)
+    return f"Cleared namespace '{namespace}': removed {deleted} nodes (and their edges/vectors)."
+
+
+@mcp.tool()
+def sync_codebase(target_dir: str, namespace: str) -> str:
+    """
+    Sync an updated codebase: clear the namespace's old graph, then re-extract
+    and re-import from source. REPLACES the namespace contents (idempotent, no
+    duplicates). Use this when the project source has changed.
+
+    SLOW & BLOCKING: re-runs AST extraction + embedding for the whole tree.
+    For very large repos this may exceed an MCP tool-call timeout — in that case
+    call clear_namespace here, then trigger extraction via the REST API
+    background task (POST /api/graph/extract with rebuild=true) instead, which
+    runs async with progress polling and no timeout.
+    Args:
+        target_dir: Absolute path to the project source root to extract.
+        namespace: Target namespace to rebuild (its current contents are wiped first).
+    """
+    from graphify_bridge import extract_to_memory
+
+    cleared = engine.clear_namespace(namespace)
+
+    # extract_to_memory prints progress to stdout, which would corrupt the
+    # MCP JSON-RPC channel (stdio). Redirect those prints to stderr (logs).
+    real_stdout, sys.stdout = sys.stdout, sys.stderr
+    try:
+        result = extract_to_memory(target_dir, namespace, db_dir="./data")
+    finally:
+        sys.stdout = real_stdout
+
+    if isinstance(result, dict) and result.get("error"):
+        return f"Sync FAILED for namespace '{namespace}' (cleared {cleared} old nodes first): {result['error']}"
+
+    nodes = result.get("nodes_imported", 0) if isinstance(result, dict) else 0
+    edges = result.get("edges_imported", 0) if isinstance(result, dict) else 0
+    return (f"Synced namespace '{namespace}': cleared {cleared} old nodes, "
+            f"then re-imported {nodes} nodes / {edges} edges.")
 
 
 if __name__ == "__main__":

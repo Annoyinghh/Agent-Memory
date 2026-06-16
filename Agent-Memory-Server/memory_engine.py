@@ -44,7 +44,8 @@ class MemoryEngine:
         self._init_sqlite()
 
         # 2. Initialize ChromaDB (Vector Search)
-        self.chroma_client = chromadb.PersistentClient(path=os.path.join(db_dir, "chroma_db"))
+        self._chroma_path = os.path.join(db_dir, "chroma_db")
+        self.chroma_client = chromadb.PersistentClient(path=self._chroma_path)
         # We use a single collection, filtering by namespace via metadata
         self.collection = self.chroma_client.get_or_create_collection(name="agent_memory")
         
@@ -155,10 +156,12 @@ class MemoryEngine:
         # 0. Deduplication Check
         if dedup_threshold > 0.0:
             # We want to check for semantic similarity using Chroma
-            vector_results = self.collection.query(
-                query_texts=[content],
-                n_results=1,
-                where={"namespace": namespace}
+            vector_results = self._safe_chroma_query(
+                {
+                    "query_texts": [content],
+                    "n_results": 1,
+                    "where": {"namespace": namespace},
+                }
             )
             
             if vector_results and vector_results['ids'] and len(vector_results['ids'][0]) > 0:
@@ -255,6 +258,32 @@ class MemoryEngine:
             return {"access_count": row[0], "is_pinned": bool(row[1])}
         return {"access_count": 0, "is_pinned": False}
 
+    def _refresh_collection(self) -> None:
+        """Re-open the ChromaDB client + collection from disk.
+
+        A long-lived engine (e.g. the MCP server process) keeps a memory-mapped
+        HNSW index. When ANOTHER process clears + re-imports the collection
+        (a REST rebuild / sync), this process's mmap can diverge from disk and
+        raise on the next query. Re-opening forces a fresh read of the index.
+        Safe and data-preserving: same path + same collection name + same
+        default embedding function.
+        """
+        self.chroma_client = chromadb.PersistentClient(path=self._chroma_path)
+        self.collection = self.chroma_client.get_or_create_collection(name="agent_memory")
+
+    def _safe_chroma_query(self, query_args: dict):
+        """collection.query with one refresh+retry to heal a stale handle.
+
+        If the first query fails (stale HNSW mmap after a cross-process rebuild),
+        reopen the client and retry once. Re-raises if it still fails so the
+        real error surfaces instead of being silently swallowed.
+        """
+        try:
+            return self.collection.query(**query_args)
+        except Exception:
+            self._refresh_collection()
+            return self.collection.query(**query_args)
+
     @db_lock
     def hybrid_search(self, namespace: str, query: str, top_k: int = 5) -> List[MemoryItem]:
         """Perform Hybrid Search: Keyword (FTS5) + Semantic (Chroma)."""
@@ -328,8 +357,8 @@ class MemoryEngine:
         if namespace != "all":
             query_args["where"] = {"namespace": namespace}
             
-        vector_results = self.collection.query(**query_args)
-        
+        vector_results = self._safe_chroma_query(query_args)
+
         if vector_results and vector_results['ids'] and len(vector_results['ids']) > 0:
             ids = vector_results['ids'][0]
             docs = vector_results['documents'][0]
@@ -603,6 +632,35 @@ Conversation:
             self.collection.delete(ids=delete_ids)
         return len(delete_ids)
 
+    @db_lock
+    def clear_namespace(self, namespace: str) -> int:
+        """Wipe ALL nodes, edges, and vectors for a namespace.
+
+        Used to reset a code graph before re-importing an updated codebase
+        (sync) so re-extraction does not pile duplicates on top of the old
+        graph. Returns the number of nodes removed.
+        """
+        self.cursor.execute("SELECT id FROM memory_fts WHERE namespace=?", (namespace,))
+        ids = [row[0] for row in self.cursor.fetchall()]
+        if not ids:
+            return 0
+
+        # Delete vectors in batches — Chroma can choke on very large id lists.
+        for i in range(0, len(ids), 500):
+            self.collection.delete(ids=ids[i:i + 500])
+
+        placeholders = ",".join(["?"] * len(ids))
+        # Drop edges touching any removed node (either endpoint).
+        self.cursor.execute(
+            f"DELETE FROM memory_edges WHERE from_id IN ({placeholders}) OR to_id IN ({placeholders})",
+            ids + ids,
+        )
+        self.cursor.execute(f"DELETE FROM graph_nodes WHERE id IN ({placeholders})", ids)
+        self.cursor.execute(f"DELETE FROM memory_stats WHERE id IN ({placeholders})", ids)
+        self.cursor.execute(f"DELETE FROM memory_fts WHERE id IN ({placeholders})", ids)
+        self.conn.commit()
+        return len(ids)
+
     # =========================================================
     # Session Management Operations
     # =========================================================
@@ -794,6 +852,107 @@ Conversation:
         node = {"id": row[0], "namespace": row[1], "content": row[2], "source": row[3], "timestamp": row[4]}
         node["edges"] = self.get_neighbors(node_id)
         return node
+
+    @db_lock
+    def precise_source_search(
+        self,
+        namespace: str,
+        query: str,
+        max_results: int = 8,
+        context_lines: int = 4,
+    ) -> List[Dict[str, Any]]:
+        """Search exact terms inside source files referenced by graph nodes.
+
+        This fills the gap between graph summaries and full-file reads: agents can
+        retrieve line-numbered snippets for formulas, API payloads, constants, and
+        other details without opening every related source file.
+        """
+        query = (query or "").strip()
+        if not query:
+            return []
+
+        max_results = max(1, min(int(max_results), 50))
+        context_lines = max(0, min(int(context_lines), 20))
+        terms = [query.lower()]
+        for term in query.replace('"', " ").replace("'", " ").split():
+            term = term.strip().lower()
+            if term and term not in terms:
+                terms.append(term)
+
+        if namespace == "all":
+            self.cursor.execute(
+                '''SELECT DISTINCT gn.source_file
+                   FROM graph_nodes gn
+                   WHERE gn.source_file IS NOT NULL AND gn.source_file != ''
+                   ORDER BY gn.source_file'''
+            )
+        else:
+            self.cursor.execute(
+                '''SELECT DISTINCT gn.source_file
+                   FROM graph_nodes gn
+                   JOIN memory_fts m ON gn.id = m.id
+                   WHERE m.namespace = ?
+                     AND gn.source_file IS NOT NULL
+                     AND gn.source_file != ''
+                   ORDER BY gn.source_file''',
+                (namespace,),
+            )
+
+        source_files = [row[0] for row in self.cursor.fetchall()]
+        results: List[Dict[str, Any]] = []
+        seen_files = set()
+
+        for source_file in source_files:
+            path = self._resolve_indexed_source_path(source_file)
+            if not path or path in seen_files:
+                continue
+            seen_files.add(path)
+
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                    lines = fh.readlines()
+            except OSError:
+                continue
+
+            for idx, line in enumerate(lines):
+                line_lower = line.lower()
+                matched_terms = [term for term in terms if term in line_lower]
+                if not matched_terms:
+                    continue
+
+                start = max(0, idx - context_lines)
+                end = min(len(lines), idx + context_lines + 1)
+                snippet_lines = [
+                    f"{line_no}: {lines[line_no - 1].rstrip()}"
+                    for line_no in range(start + 1, end + 1)
+                ]
+                results.append({
+                    "source_file": source_file,
+                    "resolved_path": path,
+                    "line": idx + 1,
+                    "matched_terms": matched_terms,
+                    "snippet": "\n".join(snippet_lines),
+                })
+                if len(results) >= max_results:
+                    return results
+
+        return results
+
+    @staticmethod
+    def _resolve_indexed_source_path(source_file: str, source_root: Optional[str] = None) -> Optional[str]:
+        candidates = []
+        if os.path.isabs(source_file):
+            candidates.append(source_file)
+        else:
+            if source_root:
+                candidates.append(os.path.abspath(os.path.join(source_root, source_file)))
+            candidates.append(os.path.abspath(source_file))
+            candidates.append(os.path.abspath(os.path.join(os.path.dirname(__file__), source_file)))
+
+        for candidate in candidates:
+            if os.path.isfile(candidate):
+                return os.path.realpath(candidate)
+        return None
 
     @db_lock
     def shortest_path(self, from_id: str, to_id: str) -> List[Dict[str, Any]]:
@@ -1022,7 +1181,7 @@ Conversation:
             doc_id = str(uuid.uuid4())
             external_id = node.get("id") or ""
             label = node.get("label") or ""
-            content = node.get("content") or label or "empty_content"
+            content = self._build_graph_memory_content(node, label)
 
             if not isinstance(content, str) or not content.strip():
                 content = "empty_content"
@@ -1157,6 +1316,78 @@ Conversation:
             "id_map_size": len(id_map),
             "communities": len(set(community_map.values())) if community_map else 0,
         }
+
+    def _build_graph_memory_content(self, node: Dict, label: str) -> str:
+        """Build the text stored in SQLite/Chroma for a Graphify node."""
+        raw_content = node.get("content")
+        source_file = node.get("source_file") or ""
+        source_location = node.get("source_location") or ""
+        file_type = node.get("file_type") or "code"
+        node_type = node.get("node_type") or self._infer_node_type(node)
+
+        parts = [
+            f"label: {label or raw_content or 'empty_content'}",
+            f"type: {node_type}",
+            f"file_type: {file_type}",
+        ]
+        if source_file:
+            location = f"{source_file}:{source_location}" if source_location else source_file
+            parts.append(f"source: {location}")
+
+        if raw_content and raw_content != label:
+            parts.append(f"summary: {raw_content}")
+
+        snippet = self._read_source_snippet(
+            source_file,
+            source_location,
+            source_root=node.get("source_root"),
+        )
+        if snippet:
+            parts.append("snippet:\n" + snippet)
+
+        return "\n".join(parts)
+
+    def _read_source_snippet(
+        self,
+        source_file: str,
+        source_location: str,
+        source_root: Optional[str] = None,
+        context_lines: int = 6,
+    ) -> str:
+        line_no = self._parse_source_line(source_location)
+        if not source_file or not line_no:
+            return ""
+
+        path = self._resolve_indexed_source_path(source_file, source_root=source_root)
+        if not path:
+            return ""
+
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                lines = fh.readlines()
+        except OSError:
+            return ""
+
+        start = max(0, line_no - context_lines - 1)
+        end = min(len(lines), line_no + context_lines)
+        return "\n".join(
+            f"{idx}: {lines[idx - 1].rstrip()}"
+            for idx in range(start + 1, end + 1)
+        )
+
+    @staticmethod
+    def _parse_source_line(source_location: str) -> Optional[int]:
+        if not source_location:
+            return None
+        text = str(source_location).strip()
+        if text.startswith("L"):
+            text = text[1:]
+        text = text.split(":", 1)[0].split("-", 1)[0]
+        try:
+            line_no = int(text)
+        except ValueError:
+            return None
+        return line_no if line_no > 0 else None
 
     @staticmethod
     def _infer_node_type(node: Dict) -> str:

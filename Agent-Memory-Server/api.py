@@ -537,6 +537,12 @@ class PathRequest(BaseModel):
     from_id: str
     to_id: str
 
+class PreciseSourceSearchRequest(BaseModel):
+    namespace: str
+    query: str
+    max_results: int = 8
+    context_lines: int = 4
+
 class GraphImportRequest(BaseModel):
     namespace: str
     nodes: list[dict]
@@ -575,6 +581,20 @@ def get_node_detail(node_id: str):
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
     return node
+
+@app.post("/api/graph/source-search")
+def precise_source_search(req: PreciseSourceSearchRequest):
+    """Exact line-level search over source files referenced by imported graph nodes."""
+    return {
+        "namespace": req.namespace,
+        "query": req.query,
+        "results": engine.precise_source_search(
+            req.namespace,
+            req.query,
+            req.max_results,
+            req.context_lines,
+        ),
+    }
 
 @app.post("/api/graph/path")
 def shortest_path(req: PathRequest):
@@ -631,6 +651,12 @@ def import_graph_data(req: GraphImportRequest):
 class GraphExtractRequest(BaseModel):
     target_dir: str
     namespace: str
+    # When True, wipe the namespace's existing graph first so re-extraction
+    # replaces it instead of piling duplicates on top of the old nodes.
+    rebuild: bool = False
+
+class GraphClearRequest(BaseModel):
+    namespace: str
 
 class GraphFileImportRequest(BaseModel):
     graph_path: str
@@ -638,7 +664,11 @@ class GraphFileImportRequest(BaseModel):
 
 @app.post("/api/graph/extract")
 def extract_codebase(req: GraphExtractRequest):
-    """Run Graphify extraction on a directory and import into Agent Memory (background task)."""
+    """Run Graphify extraction on a directory and import into Agent Memory (background task).
+
+    Set rebuild=True to sync an updated codebase: the namespace's old graph is
+    cleared first, then re-extracted — idempotent, no duplicate accumulation.
+    """
     _check_protected(req.namespace)
     from graphify_bridge import extract_to_memory
 
@@ -651,6 +681,16 @@ def extract_codebase(req: GraphExtractRequest):
             task_manager.update_progress(task_id, stage, current, total, message)
 
         try:
+            # Sync mode: wipe the old graph before re-extracting so we replace
+            # rather than duplicate. Uses the shared engine; safe because the
+            # clear fully commits before extract_to_memory opens its own engine.
+            if req.rebuild:
+                task_manager.update_progress(task_id, "clear", 0, 0, f"清空旧图谱: {req.namespace}")
+                deleted = engine.clear_namespace(req.namespace)
+                task_manager.update_progress(
+                    task_id, "clear", 1, 1, f"已清空 {deleted} 个旧节点，准备重新提取"
+                )
+
             result = extract_to_memory(
                 req.target_dir,
                 req.namespace,
@@ -667,7 +707,19 @@ def extract_codebase(req: GraphExtractRequest):
     thread.start()
 
     # Return task ID immediately
-    return {"task_id": task_id, "namespace": req.namespace, "message": "任务已创建，后台正在处理"}
+    message = "同步任务已创建（先清空再重新提取）" if req.rebuild else "任务已创建，后台正在处理"
+    return {"task_id": task_id, "namespace": req.namespace, "message": message}
+
+@app.post("/api/graph/clear", response_model=DeleteResponse)
+def clear_graph_namespace(req: GraphClearRequest):
+    """清空指定 namespace 的整个图谱（节点 + 边 + 向量）。
+
+    用于同步前手动清理，或在只想重置命名空间而不立即重新提取时调用。
+    快速、同步（无需重新向量化）。
+    """
+    _check_protected(req.namespace)
+    deleted = engine.clear_namespace(req.namespace)
+    return DeleteResponse(deleted_count=deleted, message=f"cleared namespace '{req.namespace}'")
 
 @app.get("/api/tasks/{task_id}")
 def get_task_status(task_id: str):
