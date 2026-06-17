@@ -65,20 +65,32 @@ cd Agent-Memory-Server
 python server.py
 ```
 
-## MCP 接入
+## MCP & Agent Skills 接入
 
-在 AI 客户端的 MCP 配置中添加：
-
-```json
-{
-  "mcpServers": {
-    "agent-memory": {
-      "command": "C:\\Users\\Administrator\\.conda\\envs\\agent-memory\\python.exe",
-      "args": ["E:\\Agent-Memory\\Agent-Memory-Server\\server.py"]
-    }
-  }
-}
+### 1. 自动部署（推荐）
+本项目提供了一键部署脚本 [install_skills.py](file:///e:/Agent-Memory/install_skills.py)。在本地项目根目录下运行以下命令，即可完成本地所有主流 CLI（Gemini, Claude Code, Codex, Antigravity）的 MCP 服务注册与 Skill 分发：
+```bash
+python install_skills.py
 ```
+
+---
+
+### 2. CLI 注册命令与配置路径
+
+如果你需要手动注册或跨机器配置，请参考下表：
+
+| 客户端 CLI | MCP 注册命令 (示例) | 本地配置文件路径 | Skill 存放路径 |
+| :--- | :--- | :--- | :--- |
+| **Claude Code** | `claude mcp add agent-memory --env PYTHONIOENCODING=utf-8 -- <python_path> <server_path>` | 全局：`~/.claude.json`<br>项目：`.mcp.json` | 全局：`~/.claude/skills/`<br>项目：`.claude/skills/` |
+| **Codex** | `codex mcp add agent-memory -- <python_path> <server_path>` | 全局：`~/.codex/config.toml`<br>项目：`.codex/config.toml` | 全局：`~/.codex/skills/`<br>项目：`.codex/skills/` |
+| **Gemini CLI** | `gemini mcp add agent-memory <python_path> <server_path>` | 全局：`~/.gemini/config.json`<br>项目：`.gemini/settings.json` | 全局：`~/.gemini/skills/`<br>项目：`.gemini/skills/` |
+| **Antigravity** | *(同 Gemini CLI)* | 全局：`~/.gemini/config.json`<br>项目：`.gemini/settings.json` | 项目：`.agents/skills/` |
+
+> 💡 **参数说明**：
+> - `<python_path>`：你的 Python/Conda 虚拟环境 Python 可执行文件路径（例如：`C:\Users\Administrator\.conda\envs\agent-memory\python.exe`）。
+> - `<server_path>`：本项目 MCP 启动脚本的绝对路径（例如：`E:\Agent-Memory\Agent-Memory-Server\server.py`）。
+
+---
 
 连接后 AI 可调用以下工具：
 
