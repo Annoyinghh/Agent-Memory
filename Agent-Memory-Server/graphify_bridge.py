@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import argparse
+import tempfile
 
 
 def extract_to_memory(target_dir: str, namespace: str, db_dir: str = "./data", progress_callback=None):
@@ -37,8 +38,13 @@ def extract_to_memory(target_dir: str, namespace: str, db_dir: str = "./data", p
     report_progress("collect", 100, 100, f"已发现 {len(files)} 个代码文件")
 
     # 2. Run Graphify AST extraction (local, no API needed for code)
+    # The AST cache must be WRITABLE. Do NOT use `target` as cache_root: when the
+    # target is a read-only mount (e.g. Docker's /workspace:ro) graphify can't
+    # write graphify-out/cache/ and every worker fails → zero nodes extracted.
+    # `target` is still used above only to READ source files (collect_files).
+    cache_root = Path(os.environ.get("GRAPHIFY_CACHE_DIR") or tempfile.gettempdir())
     report_progress("extract", 0, len(files), "开始 AST 解析...")
-    result = extract(files, cache_root=target)
+    result = extract(files, cache_root=cache_root)
 
     if not result:
         report_progress("extract", len(files), len(files), "AST 提取无结果")

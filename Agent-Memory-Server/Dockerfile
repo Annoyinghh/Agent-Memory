@@ -30,6 +30,11 @@ COPY Agent-Memory-Graphify /tmp/graphify
 RUN pip install --no-cache-dir /tmp/graphify \
     && rm -rf /tmp/graphify /tmp/requirements.txt
 
+# 3) Pre-download chromadb's default embedding model (all-MiniLM-L6-v2 ONNX, ~80MB)
+#    into the image. Without this, the FIRST extraction in a fresh container hangs
+#    on a slow runtime download; baking it in makes extraction work offline & fast.
+RUN python -c "import chromadb; from chromadb.utils import embedding_functions as e; e.DefaultEmbeddingFunction()(['warmup'])"
+
 # 3) Application source (api.py, server.py, memory_engine.py, graphify_bridge.py, ...).
 COPY Agent-Memory-Server /app
 

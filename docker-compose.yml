@@ -22,6 +22,9 @@ services:
     environment:
       PROTECTED_NAMESPACES: ${PROTECTED_NAMESPACES:-test}
       PYTHONIOENCODING: utf-8
+      # Writable cache dir for graphify AST cache (graphify-out/cache/). Must NOT
+      # point at a read-only mount, or every extraction worker fails with EROFS.
+      GRAPHIFY_CACHE_DIR: /app/.graphify-cache
       # Optional — only used by consolidate_memory (litellm):
       LLM_MODEL: ${LLM_MODEL:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -29,6 +32,12 @@ services:
     volumes:
       # Persist the existing SQLite + ChromaDB. Single owner = this container.
       - ./Agent-Memory-Server/data:/app/data
+      # Persistent writable graphify AST cache (so re-extraction is faster and
+      # never touches the source mount). See GRAPHIFY_CACHE_DIR above.
+      - graphify-cache:/app/.graphify-cache
+      # shipbearERP 代码库只读挂载，供 graphify 读取抽取。:ro 安全——缓存走上面的卷，
+      # graphify 不会往源码仓库写任何东西（graphify-out/cache → GRAPHIFY_CACHE_DIR）。
+      - E:/shipbearERP-master:/workspace:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8900/health',timeout=3).status==200 else 1)"]
@@ -48,3 +57,6 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  graphify-cache:
