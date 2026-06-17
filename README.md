@@ -126,6 +126,43 @@ ANTHROPIC_API_KEY=               # 配合 LLM_MODEL=claude-opus-4-8 等
 
 > 卷路径按你的实际仓库位置改（Windows 用正斜杠 `/` 或 `E:/...`）。Codex / Gemini CLI 用各自等价的 MCP 注册命令，镜像与卷参数相同。
 
+### 在其他设备 / 服务器上部署
+
+已容器化，**新机器无需装 conda / Node**，只要有 Docker 即可。
+
+**前置**：Docker（Windows / macOS 装 Docker Desktop；Linux 装 Docker Engine + Compose 插件）、git。
+
+```bash
+git clone https://github.com/Annoyinghh/Agent-Memory.git
+cd Agent-Memory
+cp .env.example .env            # 可选，按需改（LLM key 等）
+docker compose up -d --build    # 首次构建：拉基础镜像 + chromadb + ~30 个 tree-sitter wheel
+```
+
+构建首次较久（后端镜像约 1.1 GB），完成后：
+- 本机访问：http://localhost:3000
+- 局域网其他设备：`http://<这台机器的IP>:3000`
+
+> 端口默认对 LAN 开放。要纯本机自用，把 `docker-compose.yml` 里 `"3000:3000"` / `"8900:8900"` 改成 `"127.0.0.1:3000:3000"` / `"127.0.0.1:8900:8900"` 再 `up`。
+
+**跨系统卷路径（配 MCP 时必改）**：`docker-compose.yml` 用相对路径 `./Agent-Memory-Server/data`，**在仓库根目录跑 compose 无需改**；但上面 MCP 配置用的是绝对路径，需按系统调整：
+
+| 系统 | data 卷绝对路径示例 |
+|---|---|
+| Linux | `/home/<user>/Agent-Memory/Agent-Memory-Server/data:/app/data` |
+| macOS | `/Users/<user>/Agent-Memory/Agent-Memory-Server/data:/app/data` |
+| Windows | `C:/Users/<user>/Agent-Memory/Agent-Memory-Server/data:/app/data` |
+
+### 数据迁移（把现有库搬到新机器）
+
+数据库在 `Agent-Memory-Server/data/`（SQLite `memory_metadata.db` + `chroma_db/`）。新机器 clone 后是空库。要搬现有数据：把旧机器整个 `data/` 目录拷到新机器的 `Agent-Memory-Server/data/`，再 `docker compose up -d`（容器直接读挂载卷）。
+
+### 常见问题
+
+- **全息人头 / 图标消失**：前端 standalone 镜像必须带 `public/`——人头模型 `female_head_final.glb` 和各 SVG 图标都在里面（`DigitalAvatar` 用 `GLTFLoader` 加载 `/female_head_final.glb`）。Dockerfile 已用 `COPY ... /app/public` 处理；若删掉这步，`/female_head_final.glb` 返回 404，人头加载失败消失。Next.js standalone **不会自动拷贝 `public/`**，必须手动 COPY。
+- **改了 `.env` 不生效**：`PROTECTED_NAMESPACES` / LLM key 等运行时变量 `docker compose up -d`（重建容器）即可生效。`NEXT_PUBLIC_*` 类（本项目不使用）才需 `--build` 重建镜像。
+- **MCP 工具报错找不到**：先确认镜像已构建（`docker images | grep agent-memory-server`），且 MCP 配置里的卷路径是**绝对路径**、指向真实存在的 `data/` 目录。
+
 ## MCP & Agent Skills 接入
 
 ### 1. 自动部署（推荐）
