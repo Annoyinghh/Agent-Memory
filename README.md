@@ -65,6 +65,67 @@ cd Agent-Memory-Server
 python server.py
 ```
 
+## Docker 部署（推荐：容器化编排）
+
+整个系统（后端 API + 前端 + MCP）可用 `docker compose` 一键管理，无需本机 conda 环境。两个镜像：
+
+| 镜像 | 内容 | 大小 |
+|---|---|---|
+| `agent-memory-server` | FastAPI + ChromaDB + litellm + 本地 graphify 包（API 与 MCP 共用同一镜像） | ~1.1 GB |
+| `agent-memory-ui` | Next.js 16 standalone 生产构建 | ~280 MB |
+
+数据卷 `Agent-Memory-Server/data`（SQLite + ChromaDB）以 bind mount 挂载，**保留你已有的数据库**，容器重建/重启不丢。
+
+### 启动 / 停止
+
+```bash
+docker compose up -d --build    # 构建并后台启动
+docker compose ps               # 查看健康状态
+docker compose logs -f backend  # 跟随后端日志
+docker compose down             # 停止并移除容器（数据卷保留在宿主）
+```
+
+启动后：
+- Dashboard UI：http://localhost:3000（局域网用 `http://<本机IP>:3000`）
+- REST API 文档：http://localhost:8900/docs
+
+### 架构要点
+
+- **单一数据所有者**：只有 `backend` 容器写 `data/` 卷，根除历史上跨进程 ChromaDB 句柄失效（`Error finding id`）问题。
+- **前端反向代理**：浏览器只访问前端一个端口（3000）。Next.js `rewrites` 把所有 `/api/*` 转发到容器内网的 `backend:8900`，所以**本机 IP 变了无需重建前端**。前端 `src/lib/api.js` 用相对路径（`BASE_URL=''`）。
+- **健康检查**：`GET /health` 供 compose healthcheck；前端 `depends_on: backend (service_healthy)`。
+
+### 配置（`.env`）
+
+复制 `.env.example` 为 `.env` 按需调整（全部可选）：
+
+```bash
+PROTECTED_NAMESPACES=test        # 不可清空的 namespace
+LLM_MODEL=                       # consolidate_memory 用的 LLM（留空=禁用）
+OPENAI_API_KEY=                  # 配合 LLM_MODEL=gpt-4o-mini 等
+ANTHROPIC_API_KEY=               # 配合 LLM_MODEL=claude-opus-4-8 等
+```
+
+> 注意：`NEXT_PUBLIC_API_URL` 不再需要——前端走反向代理，不烘焙后端地址。
+
+### MCP Server 也跑在容器里（消除 stale-handle）
+
+各 CLI 把 MCP 命令指向容器，复用 `agent-memory-server` 镜像 + 同一数据卷。每次调用 = 一次性容器，与 `backend` 共享数据但进程隔离。以 Claude Code 为例（`~/.claude.json` 的 `mcpServers`）：
+
+```json
+"agent-memory": {
+  "command": "docker",
+  "args": [
+    "run", "-i", "--rm",
+    "-v", "E:/Agent-Memory/Agent-Memory-Server/data:/app/data",
+    "-e", "PYTHONIOENCODING=utf-8",
+    "agent-memory-server", "python", "server.py"
+  ]
+}
+```
+
+> 卷路径按你的实际仓库位置改（Windows 用正斜杠 `/` 或 `E:/...`）。Codex / Gemini CLI 用各自等价的 MCP 注册命令，镜像与卷参数相同。
+
 ## MCP & Agent Skills 接入
 
 ### 1. 自动部署（推荐）
@@ -323,11 +384,15 @@ project_overview()
 
 ```
 Agent-Memory/
-├── start.bat                    # 一键启动脚本（启动 API + UI）
+├── docker-compose.yml           # 容器编排（backend + frontend, 推荐）
+├── .dockerignore                # 构建上下文排除（绝不烤入 data/）
+├── .env.example                 # Docker 环境变量模板
+├── start.bat                    # 一键启动脚本（启动 API + UI，非容器模式）
 ├── stop.bat                     # 一键停止脚本（杀进程树，释放端口与 sqlite 锁）
 ├── Agent-Memory-Server/         # Python 后端
+│   ├── Dockerfile               # 后端镜像（Python + graphify, API/MCP 共用）
 │   ├── memory_engine.py         # 核心引擎（双存储 + 混合检索 + 图谱 + clear_namespace）
-│   ├── api.py                   # FastAPI REST 服务（含后台任务 + rebuild 同步）
+│   ├── api.py                   # FastAPI REST 服务（含后台任务 + rebuild 同步 + /health）
 │   ├── server.py                # MCP Server（含 project_overview / sync_codebase / clear_namespace）
 │   ├── task_manager.py          # 后台任务管理（提取/导入的进度跟踪）
 │   ├── graphify_bridge.py       # Graphify 提取桥接器（带进度回调）
@@ -336,13 +401,15 @@ Agent-Memory/
 │   ├── ingest.py                # 批量文件导入
 │   ├── rebuild_namespace.py     # 命名空间重建 CLI（清空 + 重新提取）
 │   ├── requirements.txt         # Python 依赖
-│   └── data/                    # 运行时数据目录
+│   └── data/                    # 运行时数据目录（容器内 bind mount 持久化）
 │       ├── chroma_db/           # 向量数据库
 │       └── memory_metadata.db   # SQLite 元数据
-├── Agent-Memory-Graphify/       # Graphify 源码（AST 提取引擎）
+├── Agent-Memory-Graphify/       # Graphify 源码（AST 提取引擎，构建时打包进后端镜像）
 └── Agent-memory-ui/             # Next.js 前端
+    ├── Dockerfile               # 前端镜像（standalone 多阶段构建）
+    ├── next.config.mjs          # output:standalone + /api 反向代理 rewrites
     ├── src/app/page.js          # 主页面
-    ├── src/lib/api.js           # API 客户端
+    ├── src/lib/api.js           # API 客户端（相对路径 BASE_URL）
     ├── src/context/AppContext.js # 全局状态
     └── src/components/          # UI 组件
 ```

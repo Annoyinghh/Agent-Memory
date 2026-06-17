@@ -770,6 +770,11 @@ def debug_log(req: DebugLogRequest):
     print(f"[BROWSER DEBUG] {req.message}", file=sys.stderr)
     return {"status": "ok"}
 
+@app.get("/health")
+def health():
+    """Liveness probe for Docker healthcheck / load balancers."""
+    return {"status": "ok"}
+
 
 if __name__ == "__main__":
     import uvicorn

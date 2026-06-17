@@ -1,0 +1,17 @@
+# Frontend build context = Agent-memory-ui/.
+# Keep only what `next build` needs; shrink the context sent to the daemon.
+
+node_modules/
+.next/
+.git/
+.gitignore
+
+# Caches
+**/__pycache__/
+
+# Docs / tooling not needed in the image
+*.md
+Dockerfile*
+.dockerignore
+.env
+.env.*

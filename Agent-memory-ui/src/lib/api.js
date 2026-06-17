@@ -1,9 +1,13 @@
 /**
  * Agent Memory API Client Utility
- * Handles communications with the local memory backend at http://127.0.0.1:8900
+ *
+ * Calls are relative (BASE_URL = '') so the browser talks to whatever origin served
+ * the page. In Docker the Next.js server reverse-proxies /api/* → backend:8900 via
+ * next.config.mjs `rewrites`, so only one host port is exposed regardless of LAN IP.
+ * Override with NEXT_PUBLIC_API_URL only for a non-proxied direct backend address.
  */
 
-export const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8900';
+export const BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 async function request(path, options = {}) {
   const url = `${BASE_URL}${path}`;

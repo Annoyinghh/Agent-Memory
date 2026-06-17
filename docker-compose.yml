@@ -1,0 +1,50 @@
+# Agent-Memory — Docker Compose orchestration.
+#
+#   docker compose up -d --build     # build & start
+#   docker compose ps                # health
+#   docker compose logs -f backend   # tail logs
+#   docker compose down              # stop (data volume on host is preserved)
+#
+# Frontend (Next.js standalone) reverse-proxies /api/* to the backend over the
+# compose internal network, so the browser only ever talks to ONE host port (3000).
+# The backend port (8900) is also published for direct Swagger access; comment out
+# to hide it from the LAN.
+
+services:
+  backend:
+    image: agent-memory-server
+    build:
+      context: .                       # repo root (so the graphify sibling dir is in context)
+      dockerfile: Agent-Memory-Server/Dockerfile
+    container_name: agent-memory-backend
+    ports:
+      - "8900:8900"                    # REST API + Swagger (/docs). Remove to hide from LAN.
+    environment:
+      PROTECTED_NAMESPACES: ${PROTECTED_NAMESPACES:-test}
+      PYTHONIOENCODING: utf-8
+      # Optional — only used by consolidate_memory (litellm):
+      LLM_MODEL: ${LLM_MODEL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      # Persist the existing SQLite + ChromaDB. Single owner = this container.
+      - ./Agent-Memory-Server/data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8900/health',timeout=3).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  frontend:
+    image: agent-memory-ui
+    build:
+      context: Agent-memory-ui
+    container_name: agent-memory-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
