@@ -165,28 +165,36 @@ docker compose up -d --build    # 首次构建：拉基础镜像 + chromadb + ~3
 
 ## MCP & Agent Skills 接入
 
+> **Docker 模式（默认，推荐）**：MCP server 跑在 `agent-memory-server` 容器里，各 CLI 通过 `docker run -i --rm` 拉起，挂载与 backend 相同的 data 卷 → **单一数据所有者**，根除历史上本地 conda 进程与容器并发读写同一份 SQLite/ChromaDB 导致的 stale-handle 数据丢失。
+>
+> ⚠️ **务必先 `docker compose up -d --build`**（镜像存在后再注册），并**不要**再让任何 CLI 用本地 conda python 跑 `server.py`——多进程争用同一 data 目录是反复出现"数据消失"的根因。
+
 ### 1. 自动部署（推荐）
-本项目提供了一键部署脚本 [install_skills.py](file:///e:/Agent-Memory/install_skills.py)。在本地项目根目录下运行以下命令，即可完成本地所有主流 CLI（Gemini, Claude Code, Codex, Antigravity）的 MCP 服务注册与 Skill 分发：
+本项目提供一键部署脚本 [install_skills.py](file:///e:/Agent-Memory/install_skills.py)。**先 `docker compose up -d --build` 起好容器**，再在项目根目录运行：
+
 ```bash
-python install_skills.py
+python install_skills.py            # Docker 模式：给各 CLI 注册 docker 版 MCP + 分发 SKILL.md
+python install_skills.py --skip-mcp # 只分发 SKILL.md，不动 MCP 配置
 ```
+
+脚本会校验 Docker 可用且镜像已构建，然后向 Claude Code / Codex / Gemini(Antigravity) 注册 `docker run -i --rm -v <data>:/app/data agent-memory-server python server.py` 形式的 MCP。
 
 ---
 
-### 2. CLI 注册命令与配置路径
+### 2. 手动注册 / 跨机器配置
 
-如果你需要手动注册或跨机器配置，请参考下表：
+每个 CLI 注册命令的 `command=docker`，`args` 为 `run -i --rm -v <data卷>:/app/data -e PYTHONIOENCODING=utf-8 agent-memory-server python server.py`：
 
 | 客户端 CLI | MCP 注册命令 (示例) | 本地配置文件路径 | Skill 存放路径 |
 | :--- | :--- | :--- | :--- |
-| **Claude Code** | `claude mcp add agent-memory --env PYTHONIOENCODING=utf-8 -- <python_path> <server_path>` | 全局：`~/.claude.json`<br>项目：`.mcp.json` | 全局：`~/.claude/skills/`<br>项目：`.claude/skills/` |
-| **Codex** | `codex mcp add agent-memory -- <python_path> <server_path>` | 全局：`~/.codex/config.toml`<br>项目：`.codex/config.toml` | 全局：`~/.codex/skills/`<br>项目：`.codex/skills/` |
-| **Gemini CLI** | `gemini mcp add agent-memory <python_path> <server_path>` | 全局：`~/.gemini/config.json`<br>项目：`.gemini/settings.json` | 全局：`~/.gemini/skills/`<br>项目：`.gemini/skills/` |
+| **Claude Code** | `claude mcp add agent-memory --env PYTHONIOENCODING=utf-8 -- docker run -i --rm -v <DATA>:/app/data agent-memory-server python server.py` | 全局：`~/.claude.json`<br>项目：`.mcp.json` | 全局：`~/.claude/skills/`<br>项目：`.claude/skills/` |
+| **Codex** | `codex mcp add agent-memory -- docker run -i --rm -v <DATA>:/app/data agent-memory-server python server.py` | 全局：`~/.codex/config.toml`<br>项目：`.codex/config.toml` | 全局：`~/.codex/skills/`<br>项目：`.codex/skills/` |
+| **Gemini CLI** | `gemini mcp add agent-memory docker run -i --rm -v <DATA>:/app/data agent-memory-server python server.py` | 全局：`~/.gemini/config.json`<br>项目：`.gemini/settings.json` | 全局：`~/.gemini/skills/`<br>项目：`.gemini/skills/` |
 | **Antigravity** | *(同 Gemini CLI)* | 全局：`~/.gemini/config.json`<br>项目：`.gemini/settings.json` | 项目：`.agents/skills/` |
 
-> 💡 **参数说明**：
-> - `<python_path>`：你的 Python/Conda 虚拟环境 Python 可执行文件路径（例如：`C:\Users\Administrator\.conda\envs\agent-memory\python.exe`）。
-> - `<server_path>`：本项目 MCP 启动脚本的绝对路径（例如：`E:\Agent-Memory\Agent-Memory-Server\server.py`）。
+> 💡 **`<DATA>`**：data 卷的宿主绝对路径，正斜杠写法。例：`E:/Agent-Memory/Agent-Memory-Server/data`（Windows）/ `/home/user/Agent-Memory/Agent-Memory-Server/data`（Linux）/ `/Users/user/...`（macOS）。
+>
+> 旧版（已废弃）：`<python_path> <server_path>` 直接用 conda python 跑 server.py。`install_skills.py --local` 仍保留此模式，但与 Docker backend 并存会触发数据竞态，**不要混用**。
 
 ---
 
