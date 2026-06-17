@@ -109,6 +109,46 @@ def install_skills(project_root):
 
 # ── MCP registration ──────────────────────────────────────────────────────────
 
+def _gemini_mcp_block(use_docker, project_root):
+    """The JSON object written under mcpServers.agent-memory for Gemini."""
+    if use_docker:
+        return {
+            "command": "docker",
+            "args": _docker_run_args(_data_volume_arg(project_root)),
+            "type": "stdio",
+        }
+    python_exe, server_py = _local_python_and_server(project_root)
+    return {"command": python_exe, "args": [server_py], "type": "stdio"}
+
+
+def write_gemini_project_mcp(project_root, use_docker=True):
+    """Write the Gemini/Antigravity PROJECT-LEVEL config directly.
+
+    `gemini mcp add` writes to the GLOBAL config by default and does NOT override
+    a pre-existing project-level `.gemini/settings.json` entry — which is exactly
+    how a stale conda MCP survived there and raced the Docker backend (stale-handle
+    data loss + 'Error finding id'). So we patch the project file explicitly.
+    """
+    import json
+    path = os.path.join(project_root, ".gemini", "settings.json")
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        cfg = {}
+        if os.path.exists(path):
+            try:
+                cfg = json.load(open(path, encoding="utf-8"))
+                if not isinstance(cfg, dict):
+                    cfg = {}
+            except Exception:
+                cfg = {}
+        # Gemini stores MCP servers under top-level "mcpServers".
+        cfg.setdefault("mcpServers", {})["agent-memory"] = _gemini_mcp_block(use_docker, project_root)
+        json.dump(cfg, open(path, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
+        print(f"  [OK] Gemini project config written: {os.path.relpath(path, project_root)}")
+    except Exception as e:
+        print(f"  [Failed] Gemini project config: {e}")
+
+
 def register_mcp_servers(project_root, use_docker=True):
     print("\nRegistering MCP server via CLI tools...")
 
@@ -123,8 +163,8 @@ def register_mcp_servers(project_root, use_docker=True):
                             'docker'] + run_args,
             "Codex":       ['codex', 'mcp', 'add', 'agent-memory', '--',
                             'docker'] + run_args,
-            "Gemini / Antigravity": ['gemini', 'mcp', 'add', 'agent-memory',
-                                     'docker'] + run_args,
+            # Gemini/Antigravity handled below by direct project-file write
+            # (`gemini mcp add` won't override an existing project-level entry).
         }
         print(f"  mode: docker | image: {IMAGE} | volume: {data_volume}")
     else:
@@ -135,8 +175,6 @@ def register_mcp_servers(project_root, use_docker=True):
                             python_exe, server_py],
             "Codex":       ['codex', 'mcp', 'add', 'agent-memory', '--',
                             python_exe, server_py],
-            "Gemini / Antigravity": ['gemini', 'mcp', 'add', 'agent-memory',
-                                     python_exe, server_py],
         }
         print(f"  mode: LOCAL (python={python_exe}) — NOT recommended with Docker backend")
 
@@ -151,6 +189,10 @@ def register_mcp_servers(project_root, use_docker=True):
             print(f"  [Skip/Failed] {name}: exit {e.returncode}")
         except Exception as e:
             print(f"  [Skip/Failed] {name}: {e}")
+
+    # Gemini/Antigravity: write project-level config directly (see write_gemini_project_mcp).
+    print("Registering Gemini / Antigravity (project config)...")
+    write_gemini_project_mcp(project_root, use_docker=use_docker)
 
 
 # ── entrypoint ────────────────────────────────────────────────────────────────
