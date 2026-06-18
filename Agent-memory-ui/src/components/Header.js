@@ -23,6 +23,8 @@ export default function Header() {
         return '全息会话隔离 (Session Isolation)';
       case 'decay':
         return '记忆衰减与遗忘 (Decay & Forgetting)';
+      case 'tutorial':
+        return '使用教程与连接指南 (User Guide & Connection)';
       default:
         return '控制台 (Dashboard)';
     }

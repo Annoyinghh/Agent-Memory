@@ -201,6 +201,7 @@ export default function SPAHomepage() {
   const [snapshotSummary, setSnapshotSummary] = useState('');
   const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [snapshotSuccess, setSnapshotSuccess] = useState(false);
+  const [mcpClientTab, setMcpClientTab] = useState('claude');
 
   // Set default dropdown namespaces when they load
   useEffect(() => {
@@ -2422,25 +2423,111 @@ export default function SPAHomepage() {
 
                 <GlassCard title="系统接口与外部连接 (API & MCP CONNECT)" glowColor="purple" className="op-panel-card">
                   <div className="font-mono" style={{ padding: '6px', fontSize: '11px', lineHeight: '1.6' }}>
-                    <p>Agent Memory REST 后端服务器在本地持续运行：</p>
-                    <ul style={{ paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <p style={{ marginBottom: '8px' }}>Agent Memory REST 后端服务器在本地持续运行：</p>
+                    <ul style={{ paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '14px' }}>
                       <li>后端接口基准地址：<code className="text-cyan">http://127.0.0.1:8900</code></li>
                       <li>交互式 Swagger 接口文档：<a href="http://127.0.0.1:8900/docs" target="_blank" rel="noreferrer" className="text-cyan" style={{ textDecoration: 'underline' }}>http://127.0.0.1:8900/docs</a></li>
-                      <li>MCP (Model Context Protocol) 协议接口：脚本文件位于 <code className="text-white">Agent-Memory-Server/server.py</code>，已注册供 Antigravity IDE 和 Claude Code 命令行工具使用。</li>
-                      <li>
-                        <strong>如何在 Claude Code (CLI) / Antigravity IDE 里面直接调用：</strong>
-                        <div style={{ background: 'rgba(0,0,0,0.35)', padding: '10px', borderRadius: '8px', marginTop: '6px', borderLeft: '3px solid hsl(var(--color-cyan))', border: '1px solid rgba(255, 187, 0, 0.15)', lineHeight: '1.7' }}>
-                          重启 <code>claude</code> CLI 后，直接用普通人类语言对它下达指令即可触发对应的 MCP 工具，例如：<br/>
-                          - <strong>添加长期记忆：</strong> <code>记住我在这个项目的开发偏好：所有后端 API 的超时时间都是 15s</code><br/>
-                          - <strong>跨会话查询：</strong> <code>帮我查一下之前记录的后端 API 偏好有哪些</code><br/>
-                          - <strong>精确源码检索：</strong> <code>在项目源码里检索 'dedup_threshold' 的定义和使用处</code> (此操作会触发 <code>precise_source_search</code> 工具，在已导入图谱节点关联的所有源文件内进行精准上下文定位)<br/>
-                          - <strong>清空命名空间图谱：</strong> <code>清空命名空间 'myproject' 的全部数据</code> (触发 <code>clear_namespace</code>，瞬间清除该分区的节点与关联链路)<br/>
-                          - <strong>同步重建代码库：</strong> <code>重新同步 'E:/my-project' 到命名空间 'myproject'</code> (触发 <code>sync_codebase</code>，执行先清空再重新提取。大库可能耗时过长，建议直接在前端罗盘控制台勾选“同步重建”运行)<br/>
-                          - <strong>读写工作记忆：</strong> <code>把临时变量 current_branch 记录为 feature/auth</code><br/>
-                          - <strong>分析星系图谱：</strong> <code>查看当前记忆图谱的统计信息</code>
-                        </div>
-                      </li>
+                      <li>MCP (Model Context Protocol) 协议接口：脚本文件位于 <code className="text-white">Agent-Memory-Server/server.py</code>。</li>
                     </ul>
+
+                    <div style={{ borderTop: '1px dashed rgba(255, 187, 0, 0.12)', paddingTop: '10px', marginTop: '10px' }}>
+                      <strong style={{ color: 'hsl(var(--color-cyan))', display: 'block', marginBottom: '6px' }}>🚀 1. 自动部署与连接 (AUTOMATIC DEPLOYMENT)</strong>
+                      <p style={{ color: 'hsl(var(--text-muted))', marginBottom: '6px' }}>
+                        项目根目录下提供一键连接与 Skill 分发脚本 <code className="text-white">install_skills.py</code>。<strong>先用 Docker 启动本系统</strong>，然后在项目根目录运行以下命令：
+                      </p>
+                      <div style={{ background: 'rgba(0,0,0,0.35)', padding: '8px 12px', borderRadius: '6px', border: '1px solid rgba(0, 242, 254, 0.15)', marginBottom: '8px' }}>
+                        <div style={{ color: '#00f2fe', marginBottom: '4px' }}># 推荐：注册 Docker 版 MCP 并分发 Skill 提示词</div>
+                        <code className="text-white">python install_skills.py</code>
+                        <div style={{ color: '#00f2fe', marginTop: '6px', marginBottom: '4px' }}># 可选：仅分发 SKILL.md，不修改 MCP 配置文件</div>
+                        <code className="text-white">python install_skills.py --skip-mcp</code>
+                      </div>
+                    </div>
+
+                    <div style={{ borderTop: '1px dashed rgba(255, 187, 0, 0.12)', paddingTop: '10px', marginTop: '10px' }}>
+                      <strong style={{ color: 'hsl(var(--color-cyan))', display: 'block', marginBottom: '8px' }}>🛠️ 2. 手动注册与多客户端适配 (MANUAL SETUP)</strong>
+                      <p style={{ color: 'hsl(var(--text-muted))', marginBottom: '10px' }}>
+                        各 CLI 工具通过 MCP 协议连接 Docker 模式以避免并发数据竞态，请根据您的客户端类型进行注册：
+                      </p>
+
+                      {/* Client Tab Switcher */}
+                      <div className="sub-mode-toggle-bar" style={{ marginBottom: '10px', borderBottom: 'none' }}>
+                        {['claude', 'codex', 'gemini', 'antigravity'].map((tab) => (
+                          <button
+                            key={tab}
+                            type="button"
+                            className={`sub-mode-tab-btn ${mcpClientTab === tab ? 'active' : ''}`}
+                            onClick={() => setMcpClientTab(tab)}
+                            style={{ padding: '4px 10px', fontSize: '10px' }}
+                          >
+                            {tab === 'claude' && 'Claude Code'}
+                            {tab === 'codex' && 'Codex'}
+                            {tab === 'gemini' && 'Gemini CLI'}
+                            {tab === 'antigravity' && 'Antigravity'}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Client Specific Instructions */}
+                      <div style={{ background: 'rgba(8,7,5,0.4)', border: '1px solid rgba(255,187,0,0.08)', borderRadius: '6px', padding: '10px', fontSize: '10px', lineHeight: '1.6' }}>
+                        {mcpClientTab === 'claude' && (
+                          <>
+                            <div style={{ marginBottom: '6px' }}><strong>MCP 注册命令:</strong></div>
+                            <pre style={{ background: 'rgba(0,0,0,0.5)', padding: '6px', borderRadius: '4px', overflowX: 'auto', border: '1px solid rgba(255,255,255,0.05)', color: '#fff', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                              claude mcp add agent-memory --env PYTHONIOENCODING=utf-8 -- docker run -i --rm -v &lt;DATA&gt;:/app/data agent-memory-server python server.py
+                            </pre>
+                            <div style={{ marginTop: '8px' }}><strong>配置文件路径:</strong> <code className="text-cyan">~/.claude.json</code> (全局) / <code className="text-cyan">.mcp.json</code> (项目)</div>
+                            <div style={{ marginTop: '4px' }}><strong>Skill 存放路径:</strong> <code className="text-cyan">~/.claude/skills/</code> (全局) / <code className="text-cyan">.claude/skills/</code> (项目)</div>
+                          </>
+                        )}
+                        {mcpClientTab === 'codex' && (
+                          <>
+                            <div style={{ marginBottom: '6px' }}><strong>MCP 注册命令:</strong></div>
+                            <pre style={{ background: 'rgba(0,0,0,0.5)', padding: '6px', borderRadius: '4px', overflowX: 'auto', border: '1px solid rgba(255,255,255,0.05)', color: '#fff', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                              codex mcp add agent-memory -- docker run -i --rm -v &lt;DATA&gt;:/app/data agent-memory-server python server.py
+                            </pre>
+                            <div style={{ marginTop: '8px' }}><strong>配置文件路径:</strong> <code className="text-cyan">~/.codex/config.toml</code> (全局) / <code className="text-cyan">.codex/config.toml</code> (项目)</div>
+                            <div style={{ marginTop: '4px' }}><strong>Skill 存放路径:</strong> <code className="text-cyan">~/.codex/skills/</code> (全局) / <code className="text-cyan">.codex/skills/</code> (项目)</div>
+                          </>
+                        )}
+                        {mcpClientTab === 'gemini' && (
+                          <>
+                            <div style={{ marginBottom: '6px' }}><strong>MCP 注册命令:</strong></div>
+                            <pre style={{ background: 'rgba(0,0,0,0.5)', padding: '6px', borderRadius: '4px', overflowX: 'auto', border: '1px solid rgba(255,255,255,0.05)', color: '#fff', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                              gemini mcp add agent-memory docker run -i --rm -v &lt;DATA&gt;:/app/data agent-memory-server python server.py
+                            </pre>
+                            <div style={{ marginTop: '8px' }}><strong>配置文件路径:</strong> <code className="text-cyan">~/.gemini/config.json</code> (全局) / <code className="text-cyan">.gemini/settings.json</code> (项目)</div>
+                            <div style={{ marginTop: '4px' }}><strong>Skill 存放路径:</strong> <code className="text-cyan">~/.gemini/skills/</code> (全局) / <code className="text-cyan">.gemini/skills/</code> (项目)</div>
+                          </>
+                        )}
+                        {mcpClientTab === 'antigravity' && (
+                          <>
+                            <div style={{ marginBottom: '6px' }}><strong>MCP 注册命令:</strong> (与 Gemini CLI 格式相同)</div>
+                            <pre style={{ background: 'rgba(0,0,0,0.5)', padding: '6px', borderRadius: '4px', overflowX: 'auto', border: '1px solid rgba(255,255,255,0.05)', color: '#fff', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                              gemini mcp add agent-memory docker run -i --rm -v &lt;DATA&gt;:/app/data agent-memory-server python server.py
+                            </pre>
+                            <div style={{ marginTop: '8px' }}><strong>配置文件路径:</strong> <code className="text-cyan">~/.gemini/config.json</code> (全局) / <code className="text-cyan">.gemini/settings.json</code> (项目)</div>
+                            <div style={{ marginTop: '4px' }}><strong>Skill 存放路径:</strong> <code className="text-cyan">.agents/skills/</code> (项目)</div>
+                          </>
+                        )}
+                        <div style={{ marginTop: '8px', color: 'hsl(var(--color-purple))', fontSize: '9px' }}>
+                          💡 <strong>&lt;DATA&gt;</strong>: 宿主机器上 data 目录的绝对路径，例如: <code>E:/Agent-Memory/Agent-Memory-Server/data</code> (Windows) / <code>/home/user/Agent-Memory/Agent-Memory-Server/data</code> (Linux)。
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ borderTop: '1px dashed rgba(255, 187, 0, 0.12)', paddingTop: '10px', marginTop: '10px' }}>
+                      <strong style={{ color: 'hsl(var(--color-cyan))', display: 'block', marginBottom: '6px' }}>🗣️ 3. 如何在对话中直接调用 (HOW TO USE)</strong>
+                      <div style={{ background: 'rgba(0,0,0,0.35)', padding: '10px', borderRadius: '8px', borderLeft: '3px solid hsl(var(--color-cyan))', border: '1px solid rgba(255, 187, 0, 0.15)', lineHeight: '1.7' }}>
+                        连接成功后，直接用普通人类语言对 AI 下达指令即可自动触发对应的 MCP 工具：<br/>
+                        - <strong>添加长期记忆：</strong> <code>记住我在这个项目的开发偏好：所有后端 API 的超时时间都是 15s</code><br/>
+                        - <strong>跨会话查询：</strong> <code>帮我查一下之前记录的后端 API 偏好有哪些</code><br/>
+                        - <strong>精确源码检索：</strong> <code>在项目源码里检索 'dedup_threshold' 的定义和使用处</code> (此操作会触发 <code>precise_source_search</code> 工具，在已导入图谱节点关联的所有源文件内进行精准上下文定位)<br/>
+                        - <strong>清空命名空间图谱：</strong> <code>清空命名空间 'myproject' 的全部数据</code> (触发 <code>clear_namespace</code>，瞬间清除该分区的节点与关联链路)<br/>
+                        - <strong>同步重建代码库：</strong> <code>重新同步 'E:/my-project' 到命名空间 'myproject'</code> (触发 <code>sync_codebase</code>，支持增量模式。大库若同步阻塞，建议直接在前端控制台操作)<br/>
+                        - <strong>读写工作记忆：</strong> <code>把临时变量 current_branch 记录为 feature/auth</code><br/>
+                        - <strong>分析星系图谱：</strong> <code>查看当前记忆图谱的统计信息</code>
+                      </div>
+                    </div>
                   </div>
                 </GlassCard>
               </div>

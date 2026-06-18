@@ -596,14 +596,23 @@ export const api = {
    * Run Graphify extraction on a directory - returns task ID immediately (background task)
    * @param {string} targetDir - Directory to extract
    * @param {string} namespace - Target namespace
-   * @param {boolean} [rebuild=false] - Whether to clear the namespace first
+   * @param {boolean|Object} [options=false] - If boolean, acts as rebuild. If object, can contain rebuild and incremental.
    * @returns {Promise<{task_id: string, namespace: string, message: string}>}
    */
-  extractCodebase: (targetDir, namespace, rebuild = false) =>
-    request('/api/graph/extract', {
+  extractCodebase: (targetDir, namespace, options = false) => {
+    let rebuild = false;
+    let incremental = false;
+    if (typeof options === 'boolean') {
+      rebuild = options;
+    } else if (options && typeof options === 'object') {
+      rebuild = !!options.rebuild;
+      incremental = !!options.incremental;
+    }
+    return request('/api/graph/extract', {
       method: 'POST',
-      body: JSON.stringify({ target_dir: targetDir, namespace, rebuild }),
-    }),
+      body: JSON.stringify({ target_dir: targetDir, namespace, rebuild, incremental }),
+    });
+  },
 
   /**
    * Clear all graph data (nodes + edges + vectors) for a namespace

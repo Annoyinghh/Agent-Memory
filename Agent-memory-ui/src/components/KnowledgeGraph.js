@@ -42,7 +42,7 @@ export default function KnowledgeGraph() {
   const [extractPath, setExtractPath] = useState('');
   const [extractNamespace, setExtractNamespace] = useState('');
   const [extracting, setExtracting] = useState(false);
-  const [extractRebuild, setExtractRebuild] = useState(false);
+  const [extractMode, setExtractMode] = useState('incremental');
   const [extractProgress, setExtractProgress] = useState({ stage: '', current: 0, total: 0, message: '', percent: 0 });
 
   // Import graph.json File States
@@ -203,7 +203,10 @@ export default function KnowledgeGraph() {
 
     try {
       // Submit task - returns immediately with task_id
-      const taskRes = await api.extractCodebase(extractPath.trim(), targetNamespace, extractRebuild);
+      const taskRes = await api.extractCodebase(extractPath.trim(), targetNamespace, {
+        rebuild: extractMode === 'rebuild',
+        incremental: extractMode === 'incremental'
+      });
       const taskId = taskRes.task_id;
 
       if (!taskId) {
@@ -213,7 +216,7 @@ export default function KnowledgeGraph() {
       setShowExtractInput(false);
       setExtractPath('');
       setExtractNamespace('');
-      setExtractRebuild(false);
+      setExtractMode('incremental');
 
       // Poll until complete
       await pollTaskUntilComplete(
@@ -242,7 +245,7 @@ export default function KnowledgeGraph() {
       alert(`提交提取任务失败: ${err.message || err}`);
       setExtractProgress({ stage: '', current: 0, total: 0, message: '', percent: 0 });
       setExtracting(false);
-      setExtractRebuild(false);
+      setExtractMode('incremental');
     }
   };
 
@@ -1202,18 +1205,19 @@ export default function KnowledgeGraph() {
                     style={{ height: '28px', fontSize: '11px', padding: '4px 8px' }}
                     disabled={extracting}
                   />
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', margin: '4px 0' }}>
-                    <input
-                      id="extract-rebuild-checkbox"
-                      type="checkbox"
-                      checked={extractRebuild}
-                      onChange={(e) => setExtractRebuild(e.target.checked)}
-                      style={{ cursor: 'pointer' }}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', margin: '4px 0' }}>
+                    <label style={{ fontSize: '9px', color: 'rgba(255, 187, 0, 0.8)' }}>同步模式 (Sync Mode):</label>
+                    <select
+                      value={extractMode}
+                      onChange={(e) => setExtractMode(e.target.value)}
+                      className="sci-control-select"
+                      style={{ height: '28px', fontSize: '11px', padding: '2px 6px' }}
                       disabled={extracting}
-                    />
-                    <label htmlFor="extract-rebuild-checkbox" style={{ fontSize: '10px', color: 'rgba(255, 255, 255, 0.7)', cursor: 'pointer' }}>
-                      同步重建 (先清空已存在的数据)
-                    </label>
+                    >
+                      <option value="incremental">增量更新 (仅提取变化文件)</option>
+                      <option value="rebuild">同步重建 (先清空历史数据)</option>
+                      <option value="append">追加提取 (保留历史全量追加)</option>
+                    </select>
                   </div>
                   <div style={{ display: 'flex', gap: '6px' }}>
                     <button
@@ -1223,11 +1227,11 @@ export default function KnowledgeGraph() {
                       style={{ height: '28px', fontSize: '11px', padding: '0 12px', flex: 1 }}
                       disabled={extracting || !extractPath.trim()}
                     >
-                      {extracting ? '提取中...' : (extractRebuild ? '清空并同步重建' : '开始提取')}
+                      {extracting ? '提取中...' : (extractMode === 'rebuild' ? '清空并同步重建' : extractMode === 'incremental' ? '增量更新' : '开始追加提取')}
                     </button>
                     <button
                       type="button"
-                      onClick={() => { setShowExtractInput(false); setExtractPath(''); setExtractNamespace(''); setExtractRebuild(false); }}
+                      onClick={() => { setShowExtractInput(false); setExtractPath(''); setExtractNamespace(''); setExtractMode('incremental'); }}
                       className="wm-edit-btn-inline"
                       style={{ height: '28px', fontSize: '11px', padding: '0 12px' }}
                       disabled={extracting}
