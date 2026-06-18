@@ -147,6 +147,18 @@ class MemoryEngine:
         self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_graph_nodes_type ON graph_nodes(node_type)')
         self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_graph_nodes_community ON graph_nodes(community_id)')
         self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_graph_nodes_external ON graph_nodes(external_id)')
+        # Incremental-extraction manifest: records the content hash of every source
+        # file last imported into a namespace, so re-extraction can skip unchanged
+        # files (and their embeddings) instead of re-importing the whole graph.
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS graph_manifest (
+                namespace TEXT,
+                source_file TEXT,
+                content_hash TEXT,
+                imported_at INTEGER,
+                PRIMARY KEY (namespace, source_file)
+            )
+        ''')
         self.conn.commit()
 
     @db_lock
@@ -644,13 +656,21 @@ Conversation:
         ids = [row[0] for row in self.cursor.fetchall()]
         if not ids:
             return 0
+        removed = self._delete_nodes_by_ids(ids)
+        self.conn.commit()
+        return removed
 
-        # Delete vectors in batches — Chroma can choke on very large id lists.
+    def _delete_nodes_by_ids(self, ids):
+        """Delete a set of node ids from all stores (vectors, edges, metadata, fts).
+
+        Shared by clear_namespace (whole namespace) and clear_files_in_namespace
+        (a subset of source files within a namespace).
+        """
+        if not ids:
+            return 0
         for i in range(0, len(ids), 500):
             self.collection.delete(ids=ids[i:i + 500])
-
         placeholders = ",".join(["?"] * len(ids))
-        # Drop edges touching any removed node (either endpoint).
         self.cursor.execute(
             f"DELETE FROM memory_edges WHERE from_id IN ({placeholders}) OR to_id IN ({placeholders})",
             ids + ids,
@@ -658,8 +678,62 @@ Conversation:
         self.cursor.execute(f"DELETE FROM graph_nodes WHERE id IN ({placeholders})", ids)
         self.cursor.execute(f"DELETE FROM memory_stats WHERE id IN ({placeholders})", ids)
         self.cursor.execute(f"DELETE FROM memory_fts WHERE id IN ({placeholders})", ids)
-        self.conn.commit()
         return len(ids)
+
+    @db_lock
+    def clear_files_in_namespace(self, namespace: str, source_files) -> int:
+        """Delete ONLY the nodes belonging to the given source files within a
+        namespace (not the whole namespace). Used by incremental extraction to
+        reset changed/deleted files before re-importing them. Returns node count.
+        """
+        source_files = [sf for sf in source_files if sf]
+        if not source_files:
+            return 0
+        # Nodes for a file live in graph_nodes.source_file; their ids are the same
+        # as the memory_fts ids (doc_id).
+        placeholders = ",".join(["?"] * len(source_files))
+        self.cursor.execute(
+            f"SELECT id FROM graph_nodes WHERE source_file IN ({placeholders}) "
+            f"AND id IN (SELECT id FROM memory_fts WHERE namespace=?)",
+            [*source_files, namespace],
+        )
+        ids = [row[0] for row in self.cursor.fetchall()]
+        removed = self._delete_nodes_by_ids(ids)
+        self.conn.commit()
+        return removed
+
+    @db_lock
+    def get_manifest(self, namespace: str) -> dict:
+        """Return {source_file: content_hash} for the last import into a namespace."""
+        self.cursor.execute(
+            "SELECT source_file, content_hash FROM graph_manifest WHERE namespace=?",
+            (namespace,),
+        )
+        return {row[0]: row[1] for row in self.cursor.fetchall()}
+
+    @db_lock
+    def upsert_manifest(self, namespace: str, file_hashes: dict, imported_at: int):
+        """Record/update content hashes for files just imported into a namespace."""
+        rows = [(namespace, sf, h, imported_at) for sf, h in file_hashes.items()]
+        self.cursor.executemany(
+            "INSERT OR REPLACE INTO graph_manifest (namespace, source_file, content_hash, imported_at) "
+            "VALUES (?, ?, ?, ?)",
+            rows,
+        )
+        self.conn.commit()
+
+    @db_lock
+    def remove_manifest(self, namespace: str, source_files):
+        """Drop manifest entries for files no longer present in the codebase."""
+        source_files = [sf for sf in source_files if sf]
+        if not source_files:
+            return
+        placeholders = ",".join(["?"] * len(source_files))
+        self.cursor.execute(
+            f"DELETE FROM graph_manifest WHERE namespace=? AND source_file IN ({placeholders})",
+            [namespace, *source_files],
+        )
+        self.conn.commit()
 
     # =========================================================
     # Session Management Operations
@@ -1148,14 +1222,22 @@ Conversation:
         return {"nodes": nodes, "edges": edges}
 
     @db_lock
-    def import_graph_data(self, nodes: List[Dict], edges: List[Dict], namespace: str, progress_callback=None) -> Dict[str, int]:
+    def import_graph_data(self, nodes: List[Dict], edges: List[Dict], namespace: str, progress_callback=None,
+                          incremental: bool = False, changed_source_files: Optional[set] = None) -> Dict[str, int]:
         """Batch import graph nodes (as memories) and edges from Graphify output.
 
         Detects communities via networkx Louvain so the visualization can color
         nodes by cluster. Stores Graphify provenance (source location, file type)
         in graph_nodes so code entities can be filtered out of regular memory search.
 
-        progress_callback: optional function(stage, current, total, message) for progress updates
+        progress_callback: optional function(stage, current, total, message) for progress updates.
+
+        Incremental mode (incremental=True): nodes whose source_file is NOT in
+        changed_source_files are assumed already imported and are SKIPPED (no new
+        doc_id, no embedding) — only changed/added files' nodes get embedded. Edges
+        are resolved against both the new id_map AND existing graph_nodes.external_id
+        (so cross-file edges to unchanged nodes survive), and community detection is
+        skipped (existing communities kept; new nodes get community_id=0).
         """
         import uuid
         id_map = {}
@@ -1174,19 +1256,28 @@ Conversation:
         chroma_documents = []
         chroma_metadatas = []
         chroma_ids = []
+        # node_meta carries the graph_nodes provenance rows (external_id, source_file, ...).
+        node_meta = []
 
         report_progress("prepare", 0, len(nodes), "准备节点数据...")
 
         for idx, node in enumerate(nodes):
-            doc_id = str(uuid.uuid4())
             external_id = node.get("id") or ""
+            source_file = node.get("source_file", "unknown")
+
+            # Incremental: skip unchanged files entirely — their nodes/vectors
+            # are already in the DB with their old doc_ids (resolved later via
+            # external_id when building edges). This is the embedding-time win.
+            if incremental and changed_source_files is not None and source_file not in changed_source_files:
+                continue
+
+            doc_id = str(uuid.uuid4())
             label = node.get("label") or ""
             content = self._build_graph_memory_content(node, label)
 
             if not isinstance(content, str) or not content.strip():
                 content = "empty_content"
 
-            source_file = node.get("source_file", "unknown")
             file_type = node.get("file_type", "code")
             source = f"graphify:{source_file}:{file_type}"
 
@@ -1199,6 +1290,7 @@ Conversation:
 
             if external_id:
                 id_map[external_id] = doc_id
+            node_meta.append((node, external_id, doc_id))
             node_count += 1
 
             # Report progress every 10% or every 100 nodes
@@ -1257,31 +1349,53 @@ Conversation:
                         pass
                 report_progress("chroma_fallback", len(chroma_ids), len(chroma_ids), "ChromaDB 逐条写入完成")
 
-        # 2. Resolve edges to internal ids, dedup before DB write
+        # 2. Resolve edges to internal ids, dedup before DB write.
+        # In incremental mode, also resolve against EXISTING graph_nodes so edges
+        # spanning changed↔unchanged files survive (the unchanged endpoint's doc_id
+        # is only in the DB, not in this batch's id_map).
         report_progress("edges", 0, len(edges), "解析边关系...")
+        if incremental:
+            self.cursor.execute(
+                "SELECT external_id, id FROM graph_nodes "
+                "WHERE external_id IS NOT NULL AND external_id != '' "
+                "AND id IN (SELECT id FROM memory_fts WHERE namespace=?)",
+                (namespace,),
+            )
+            existing_id_map = {row[0]: row[1] for row in self.cursor.fetchall()}
+            # New batch ids take precedence (a changed file's node may reuse an
+            # external_id that existed before the scoped clear).
+            edge_id_map = {**existing_id_map, **id_map}
+        else:
+            edge_id_map = id_map
+
         resolved_edges = []
         for edge in edges:
             from_external = edge.get("source", "")
             to_external = edge.get("target", "")
-            from_id = id_map.get(from_external)
-            to_id = id_map.get(to_external)
+            from_id = edge_id_map.get(from_external)
+            to_id = edge_id_map.get(to_external)
             if from_id and to_id:
                 resolved_edges.append((from_id, to_id, edge.get("relation", "unknown"), edge.get("confidence", 1.0)))
 
         report_progress("edges", len(edges), len(edges), f"已解析 {len(resolved_edges)} 条有效边")
 
-        # 3. Community detection via networkx Louvain (fallback to trivial partition)
-        report_progress("community", 0, 100, "检测社区结构...")
-        community_map = self._detect_communities(resolved_edges)
-        report_progress("community", 100, 100, f"检测到 {len(set(community_map.values())) if community_map else 0} 个社区")
+        # 3. Community detection via networkx Louvain (fallback to trivial partition).
+        # Skipped in incremental mode: Louvain is global and recomputing it per
+        # partial update would erase the (still-valid) communities of unchanged
+        # nodes. New/changed nodes get community_id=0; run rebuild=true for a full
+        # re-clustering when visualization coloring matters.
+        if incremental:
+            community_map = {}
+            report_progress("community", 100, 100, "增量模式: 跳过社区重算")
+        else:
+            report_progress("community", 0, 100, "检测社区结构...")
+            community_map = self._detect_communities(resolved_edges)
+            report_progress("community", 100, 100, f"检测到 {len(set(community_map.values())) if community_map else 0} 个社区")
 
-        # 4. Persist node metadata + community assignment
-        report_progress("metadata", 0, len(nodes), "写入节点元数据...")
-        for idx, node in enumerate(nodes):
-            external_id = node.get("id", "")
-            doc_id = id_map.get(external_id)
-            if not doc_id:
-                continue
+        # 4. Persist node metadata + community assignment (only for nodes we
+        # actually imported this batch — node_meta skips unchanged files).
+        report_progress("metadata", 0, len(node_meta), "写入节点元数据...")
+        for idx, (node, external_id, doc_id) in enumerate(node_meta):
             self.cursor.execute(
                 '''INSERT OR REPLACE INTO graph_nodes
                    (id, node_type, source_file, source_location, file_type, community_id, external_id)
@@ -1298,7 +1412,7 @@ Conversation:
             )
 
         self.conn.commit()
-        report_progress("metadata", len(nodes), len(nodes), "节点元数据写入完成")
+        report_progress("metadata", len(node_meta), len(node_meta), "节点元数据写入完成")
 
         # 5. Persist edges
         report_progress("persist_edges", 0, len(resolved_edges), "持久化边关系...")

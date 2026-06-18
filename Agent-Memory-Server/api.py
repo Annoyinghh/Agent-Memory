@@ -654,6 +654,10 @@ class GraphExtractRequest(BaseModel):
     # When True, wipe the namespace's existing graph first so re-extraction
     # replaces it instead of piling duplicates on top of the old nodes.
     rebuild: bool = False
+    # When True, only re-embed nodes of files whose content changed since the last
+    # import (tracked via a per-file manifest). Unchanged files keep their vectors,
+    # deleted files are dropped. Mutually exclusive with rebuild (rebuild wins).
+    incremental: bool = False
 
 class GraphClearRequest(BaseModel):
     namespace: str
@@ -684,6 +688,8 @@ def extract_codebase(req: GraphExtractRequest):
             # Sync mode: wipe the old graph before re-extracting so we replace
             # rather than duplicate. Uses the shared engine; safe because the
             # clear fully commits before extract_to_memory opens its own engine.
+            # rebuild takes precedence over incremental (a forced full reset).
+            do_incremental = req.incremental and not req.rebuild
             if req.rebuild:
                 task_manager.update_progress(task_id, "clear", 0, 0, f"清空旧图谱: {req.namespace}")
                 deleted = engine.clear_namespace(req.namespace)
@@ -695,7 +701,8 @@ def extract_codebase(req: GraphExtractRequest):
                 req.target_dir,
                 req.namespace,
                 os.environ.get("MEMORY_DB_DIR", "./data"),
-                progress_callback=progress_callback
+                progress_callback=progress_callback,
+                incremental=do_incremental,
             )
             task_manager.complete_task(task_id, result)
         except Exception as e:
@@ -707,7 +714,12 @@ def extract_codebase(req: GraphExtractRequest):
     thread.start()
 
     # Return task ID immediately
-    message = "同步任务已创建（先清空再重新提取）" if req.rebuild else "任务已创建，后台正在处理"
+    if req.rebuild:
+        message = "同步任务已创建（先清空再重新提取）"
+    elif req.incremental:
+        message = "增量任务已创建（仅更新变化文件）"
+    else:
+        message = "任务已创建，后台正在处理"
     return {"task_id": task_id, "namespace": req.namespace, "message": message}
 
 @app.post("/api/graph/clear", response_model=DeleteResponse)

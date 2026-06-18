@@ -274,7 +274,7 @@ python install_skills.py --skip-mcp # 只分发 SKILL.md，不动 MCP 配置
 | GET | `/api/graph/stats` | 图谱统计（节点数、边数、关系类型） |
 | GET | `/api/graph/data?namespace=` | 获取图谱全量数据（可视化用） |
 | POST | `/api/graph/import` | 批量导入图谱数据 |
-| POST | `/api/graph/extract` | Graphify AST 提取并导入（**后台任务**，返回 `task_id`；带 `rebuild=true` 时先清空再提取） |
+| POST | `/api/graph/extract` | Graphify AST 提取并导入（**后台任务**，返回 `task_id`；`rebuild=true` 先清空再全量提取；`incremental=true` 只更新变化文件） |
 | POST | `/api/graph/clear` | 清空 namespace 的整个图谱（节点+边+向量），用于同步前清理 |
 | GET | `/api/tasks/{task_id}` | 查询后台任务进度（提取/导入的状态、stage、百分比、结果） |
 | POST | `/api/graph/import-file` | 导入已有 graph.json 文件（后台任务） |
@@ -354,9 +354,11 @@ curl -X POST http://127.0.0.1:8900/api/graph/import-file \
 
 ## 代码库同步 (Sync / Rebuild)
 
-> ⚠️ **重要**：`import_graph_data` 给每个节点生成新的 uuid，不按文件路径去重。**直接对同一 namespace 再提取一次 = 图谱翻倍（旧节点全部保留 + 新节点叠上去）**，不是更新。
+> ⚠️ **重要**：`import_graph_data` 默认给每个节点生成新的 uuid，不按文件路径去重。**直接对同一 namespace 再提取一次（`rebuild=false, incremental=false`）= 图谱翻倍**（旧节点全部保留 + 新节点叠上去），不是更新。
 >
-> 因此「项目更新了同步一下」的正确做法是：**先清空旧图，再重新提取**（替换而非叠加）。
+> 因此「项目更新了同步一下」有两种正确做法：
+> - **`rebuild=true`**：清空旧图 → 全量重新提取（替换）。适合大改、想彻底重来。
+> - **`incremental=true`**：只更新变化的文件（见下方「方式一·补充」）。适合只改了几个文件，省时。
 
 ### 方式一：REST 后台任务（推荐，带进度，不超时）
 
@@ -373,6 +375,30 @@ curl http://127.0.0.1:8900/api/tasks/<task_id>
 ```
 
 进度的 `stage` 依次为：`clear`（清空旧图）→ `collect` → `extract`（AST）→ `parse` → `prepare` → `sqlite` → `chroma`（向量化，最慢）→ `edges` → `community` → `metadata` → `complete`。
+
+### 方式一·补充：增量更新（`incremental=true`，改几个文件时最省时）
+
+`rebuild=true` 是"清空全部 → 全量重嵌"，对大库（数千节点）很慢。**只改了几个文件时用 `incremental=true`**：它按文件内容哈希比对清单（`graph_manifest`），**只对变化的文件重新抽取 + 重新嵌入**，未变文件的向量原样保留。
+
+```bash
+# 增量同步：只更新变化的文件（首次/无清单时自动退化为全量并建立清单）
+curl -X POST http://127.0.0.1:8900/api/graph/extract \
+  -H "Content-Type: application/json" \
+  -d '{"target_dir": "E:/my-project", "namespace": "myproject", "incremental": true}'
+# => {"message": "增量任务已创建（仅更新变化文件）", ...}
+# 若完全无变化: result.skipped_unchanged = true，秒级返回
+```
+
+**机制**：
+- 全量抽取仍跑（graphify AST 缓存让未变文件≈秒级），保证**跨文件 import 边**正确解析；但只有变化文件的节点会重新 embedding。
+- 变化/删除的文件：先按 `source_file` 限定清掉其旧节点，再导入新的。
+- 边解析会回查 `graph_nodes.external_id`，所以"变化节点↔未变节点"的边不会丢。
+- 增量模式**跳过 Louvain 社区重算**（社区仅用于可视化着色，不影响检索）；需要准确着色时跑一次 `rebuild=true`。
+- MCP 工具 `sync_codebase(target_dir, namespace, incremental=true)` 同样支持。
+
+**实测**（shipbearERP 的 clickup 子目录，418 节点）：未变再增量 = 3 秒 / 0 重嵌（基线全量 51 秒）；改一个文件只重嵌该文件节点；删文件则该文件节点清零。跨 namespace 隔离已验证（不影响其他 namespace）。
+
+> `rebuild` 与 `incremental` 互斥，同时传时 `rebuild` 优先（强制全量清空）。
 
 只清空不重新提取（手动分两步）：
 

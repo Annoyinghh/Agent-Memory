@@ -439,7 +439,7 @@ def clear_namespace(namespace: str) -> str:
 
 
 @mcp.tool()
-def sync_codebase(target_dir: str, namespace: str) -> str:
+def sync_codebase(target_dir: str, namespace: str, incremental: bool = False) -> str:
     """
     Sync an updated codebase: clear the namespace's old graph, then re-extract
     and re-import from source. REPLACES the namespace contents (idempotent, no
@@ -448,21 +448,29 @@ def sync_codebase(target_dir: str, namespace: str) -> str:
     SLOW & BLOCKING: re-runs AST extraction + embedding for the whole tree.
     For very large repos this may exceed an MCP tool-call timeout — in that case
     call clear_namespace here, then trigger extraction via the REST API
-    background task (POST /api/graph/extract with rebuild=true) instead, which
-    runs async with progress polling and no timeout.
+    background task (POST /api/graph/extract with rebuild=true or incremental=true)
+    instead, which runs async with progress polling and no timeout.
+
+    incremental=True: only re-embed files whose content changed since the last
+    sync (much faster for small edits). Unchanged files keep their vectors.
+
     Args:
         target_dir: Absolute path to the project source root to extract.
-        namespace: Target namespace to rebuild (its current contents are wiped first).
+        namespace: Target namespace to rebuild (its current contents are wiped first,
+                   unless incremental=True).
+        incremental: If True, only update changed files instead of a full wipe+rebuild.
     """
     from graphify_bridge import extract_to_memory
 
-    cleared = engine.clear_namespace(namespace)
+    cleared = 0
+    if not incremental:
+        cleared = engine.clear_namespace(namespace)
 
     # extract_to_memory prints progress to stdout, which would corrupt the
     # MCP JSON-RPC channel (stdio). Redirect those prints to stderr (logs).
     real_stdout, sys.stdout = sys.stdout, sys.stderr
     try:
-        result = extract_to_memory(target_dir, namespace, db_dir="./data")
+        result = extract_to_memory(target_dir, namespace, db_dir="./data", incremental=incremental)
     finally:
         sys.stdout = real_stdout
 
@@ -471,7 +479,11 @@ def sync_codebase(target_dir: str, namespace: str) -> str:
 
     nodes = result.get("nodes_imported", 0) if isinstance(result, dict) else 0
     edges = result.get("edges_imported", 0) if isinstance(result, dict) else 0
-    return (f"Synced namespace '{namespace}': cleared {cleared} old nodes, "
+    mode = "incremental" if incremental else "full rebuild"
+    if incremental and result.get("skipped_unchanged"):
+        return (f"Incremental sync '{namespace}': no files changed, skipped "
+                f"(graph unchanged, {result.get('files_total', 0)} files scanned).")
+    return (f"Synced namespace '{namespace}' ({mode}): cleared {cleared} old nodes, "
             f"then re-imported {nodes} nodes / {edges} edges.")
 
 
