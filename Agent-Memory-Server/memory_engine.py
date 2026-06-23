@@ -8,6 +8,13 @@ from pydantic import BaseModel
 import threading
 import functools
 
+# Optional headroom-backed reversible compression (graceful no-op if unavailable).
+# Imported defensively so a compression-module issue can never break the engine.
+try:
+    from compression import compress_text as _compress_text
+except Exception:  # pragma: no cover - optional module
+    _compress_text = None
+
 def db_lock(func):
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
@@ -438,31 +445,58 @@ class MemoryEngine:
         return "low"
 
     @db_lock
-    def pack_context(self, namespace: str, query: str, max_tokens: int = 2000) -> str:
+    def pack_context(self, namespace: str, query: str, max_tokens: int = 2000, compress: bool = False) -> str:
         """
         Assemble the most relevant context within a given token budget using LLM-friendly XML.
         Approximate 1 token = 4 characters.
+
+        When compress=True, each included memory's content is run through headroom
+        (compression.compress_text) before packing — smaller blocks let more memories
+        fit the budget. Each compressed block carries a `retrieve="..."` attribute so the
+        LLM can call headroom_retrieve(key) for the full original. Degrades to the
+        original text verbatim if headroom is unavailable. Aggregate compression stats
+        are written to self.last_pack_stats for the REST/MCP layer to surface a ratio.
         """
         max_chars = max_tokens * 4
-        
+
         # Over-fetch slightly to ensure we have enough good candidates
         top_k_fetch = max(10, max_tokens // 50)
         results = self.hybrid_search(namespace, query, top_k=top_k_fetch)
-        
+
         if not results:
             return "<context></context>"
-            
-        packed_content = "<context>\n"
+
+        do_compress = compress and _compress_text is not None
+        header = "<context>\n"
+        if do_compress:
+            header = (
+                "<context>\n"
+                "<!-- Memory contents compressed by headroom. Each block's full original "
+                "is available via headroom_retrieve(key) using its retrieve= attribute. -->\n"
+            )
+        packed_content = header
         current_chars = len(packed_content) + len("</context>\n")
         added_chunks = 0
-        
+        orig_tokens = 0
+        comp_tokens = 0
+
         for r in results:
             age = self._format_age(r.timestamp)
             relevance = self._get_relevance(r.score)
-            
-            block = f'  <memory source="{r.source}" relevance="{relevance}" age="{age}">\n{r.content}\n  </memory>\n'
+
+            content_to_use = r.content
+            retrieve_attr = ""
+            if do_compress:
+                c = _compress_text(r.content)
+                content_to_use = c["compressed"]
+                orig_tokens += c.get("original_tokens", 0)
+                comp_tokens += c.get("compressed_tokens", 0)
+                if c.get("key"):
+                    retrieve_attr = f' retrieve="{c["key"]}"'
+
+            block = f'  <memory source="{r.source}" relevance="{relevance}" age="{age}"{retrieve_attr}>\n{content_to_use}\n  </memory>\n'
             block_len = len(block)
-            
+
             if current_chars + block_len <= max_chars:
                 packed_content += block
                 current_chars += block_len
@@ -472,10 +506,21 @@ class MemoryEngine:
             else:
                 # We skip chunks that don't fit entirely, no hard truncations.
                 continue
-                
+
+        # Surface aggregate compression stats (read by the REST/MCP layer for ratio).
+        # Done before the empty-fit early return so stats is never stale from a prior call.
+        if do_compress:
+            with self.lock:
+                self.last_pack_stats = {
+                    "original_tokens": orig_tokens,
+                    "compressed_tokens": comp_tokens,
+                    "ratio": round(comp_tokens / orig_tokens, 3) if orig_tokens else 1.0,
+                    "method": "headroom",
+                }
+
         if added_chunks == 0:
             return "<context></context>"
-                
+
         packed_content += "</context>"
         return packed_content
 

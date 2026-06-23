@@ -12,6 +12,14 @@ if hasattr(sys.stderr, 'reconfigure'):
 from mcp.server.fastmcp import FastMCP
 from memory_engine import MemoryEngine
 
+# Optional headroom-backed reversible compression (graceful no-op if unavailable).
+try:
+    from compression import compress_text, retrieve as _ccr_retrieve, stats as _ccr_stats
+except Exception:  # pragma: no cover - optional module
+    compress_text = None
+    _ccr_retrieve = None
+    _ccr_stats = None
+
 # Initialize the FastMCP server
 mcp = FastMCP("AgentMemoryServer")
 
@@ -76,16 +84,58 @@ def hybrid_search(namespace: str, query: str, top_k: int = 5) -> str:
     return "\n\n".join(formatted_results)
 
 @mcp.tool()
-def pack_context(namespace: str, query: str, max_tokens: int = 2000) -> str:
+def pack_context(namespace: str, query: str, max_tokens: int = 2000, compress: bool = False) -> str:
     """
     Assemble the most relevant context within a given token budget, returning a formatted prompt snippet.
     Args:
         namespace: The project namespace.
         query: The user's question or topic to pack context for.
         max_tokens: Approximate max tokens budget (1 token ~ 4 chars).
+        compress: If True, compress each memory's content with headroom before packing. Smaller
+            blocks fit more memories in the budget; each block keeps a retrieve= key so the full
+            original is recoverable via headroom_retrieve. No-op (verbatim) if headroom is unavailable.
     """
-    packed = engine.pack_context(namespace, query, max_tokens)
+    packed = engine.pack_context(namespace, query, max_tokens, compress=compress)
     return packed
+
+@mcp.tool()
+def headroom_compress(text: str, language: str = None) -> str:
+    """
+    Compress arbitrary text/code/logs with headroom (content-type aware: JSON, code, logs, prose).
+    Returns a compact JSON with the compressed text, a retrieve key, and the token ratio.
+    The full original can be recovered with headroom_retrieve(key). No-op if headroom is unavailable.
+    Args:
+        text: The text to compress.
+        language: Optional hint for code (e.g. 'python'); improves AST-based compression.
+    """
+    if compress_text is None:
+        return json.dumps({"compressed": text, "key": None, "ratio": 1.0, "method": "passthrough", "error": "headroom unavailable"})
+    res = compress_text(text, language=language)
+    return json.dumps(res, ensure_ascii=False)
+
+@mcp.tool()
+def headroom_retrieve(key: str) -> str:
+    """
+    Retrieve the full original text previously compressed by headroom (from pack_context's
+    compress=True or headroom_compress), identified by its retrieve key.
+    Args:
+        key: The retrieve= key from a compressed block.
+    """
+    if _ccr_retrieve is None:
+        return f"Error: compression module unavailable; cannot retrieve key '{key}'"
+    full = _ccr_retrieve(key)
+    if full is None:
+        return f"No original found for key '{key}' (it may have expired or compression was a no-op)."
+    return full
+
+@mcp.tool()
+def headroom_stats() -> str:
+    """
+    Report whether headroom compression is available and configured (presence, CCR cache dir, errors).
+    """
+    if _ccr_stats is None:
+        return json.dumps({"available": False, "error": "compression module unavailable"})
+    return json.dumps(_ccr_stats(), ensure_ascii=False, indent=2)
 
 @mcp.tool()
 def add_short_term_memory(namespace: str, role: str, content: str) -> str:

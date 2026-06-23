@@ -29,6 +29,12 @@ services:
       LLM_MODEL: ${LLM_MODEL:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # headroom reversible compression (optional). Telemetry off by default; CCR originals
+      # cache lives on the persisted /app/data volume so the REST container and per-call MCP
+      # containers share it. Set HEADROOM_ENABLED=0 to force-disable even if installed.
+      HEADROOM_TELEMETRY: ${HEADROOM_TELEMETRY:-off}
+      HEADROOM_CCR_DIR: /app/data/headroom-ccr
+      HEADROOM_ENABLED: ${HEADROOM_ENABLED:-1}
     volumes:
       # Persist the existing SQLite + ChromaDB. Single owner = this container.
       - ./Agent-Memory-Server/data:/app/data

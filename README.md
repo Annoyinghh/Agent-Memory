@@ -104,6 +104,9 @@ PROTECTED_NAMESPACES=test        # 不可清空的 namespace
 LLM_MODEL=                       # consolidate_memory 用的 LLM（留空=禁用）
 OPENAI_API_KEY=                  # 配合 LLM_MODEL=gpt-4o-mini 等
 ANTHROPIC_API_KEY=               # 配合 LLM_MODEL=claude-opus-4-8 等
+HEADROOM_ENABLED=1               # headroom 压缩总开关（0=强制禁用，即使已装）
+HEADROOM_TELEMETRY=off           # headroom 遥测（默认关，隐私）
+HEADROOM_CCR_DIR=/app/data/headroom-ccr  # 压缩原文缓存目录（持久卷；REST/MCP 共用）
 ```
 
 > 注意：`NEXT_PUBLIC_API_URL` 不再需要——前端走反向代理，不烘焙后端地址。
@@ -221,7 +224,10 @@ python install_skills.py --skip-mcp # 只分发 SKILL.md，不动 MCP 配置
 | `insert_memory(namespace, content, source, dedup_threshold)` | 写入一条长期记忆（支持语义去重） |
 | `update_memory(doc_id, namespace, content, source)` | 更新一条长期记忆 |
 | `hybrid_search(namespace, query, top_k)` | 混合检索长期记忆 |
-| `pack_context(namespace, query, max_tokens)` | 组装在 token 预算内的最优长期上下文 (XML格式) |
+| `pack_context(namespace, query, max_tokens, compress?)` | 组装在 token 预算内的最优长期上下文 (XML格式)。`compress=true` 时用 headroom 压缩每条记忆(块更小→同预算塞进更多条),每块带 `retrieve=` key,可逆 |
+| `headroom_compress(text, language?)` | 用 headroom 压缩任意文本/代码/日志/JSON/散文,返回压缩文本 + retrieve key + 压缩比(可逆) |
+| `headroom_retrieve(key)` | 按 key 取回 headroom 压缩前的完整原文 |
+| `headroom_stats()` | 查询 headroom 压缩是否可用及配置(可用性 / CCR 目录 / 错误) |
 | `add_short_term_memory(namespace, role, content)` | 添加一条短期对话记忆（滑动窗口） |
 | `get_short_term_memory(namespace)` | 获取当前 namespace 的短期记忆 |
 | `write_working_memory(namespace, key, value)` | 写入或更新工作记忆 (Scratchpad) |
@@ -255,7 +261,10 @@ python install_skills.py --skip-mcp # 只分发 SKILL.md，不动 MCP 配置
 | POST | `/api/memory/insert` | 插入长期记忆（支持语义去重） |
 | POST | `/api/memory/update` | 更新长期记忆 |
 | POST | `/api/memory/search` | 混合检索长期记忆 |
-| POST | `/api/memory/pack` | 组装在 token 预算内的最优上下文 (XML格式) |
+| POST | `/api/memory/pack` | 组装在 token 预算内的最优上下文 (XML格式)。body 加 `compress:true` 用 headroom 压缩每条记忆(可逆) |
+| POST | `/api/compress` | 用 headroom 压缩任意文本(body `{text, language?}`)→`{compressed, key, ratio, ...}` |
+| GET | `/api/compress/retrieve?key=` | 按 key 取回 headroom 压缩前的完整原文 |
+| GET | `/api/compress/stats` | 查询 headroom 压缩可用性及配置 |
 | GET | `/api/memory/search?namespace=&query=&top_k=` | GET 方式检索 |
 | POST | `/api/memory/short_term` | 添加短期对话记忆 |
 | GET | `/api/memory/short_term?namespace=` | 获取短期记忆列表 |
@@ -310,6 +319,34 @@ python ingest.py --dir ./your-docs --namespace myproject --ext .md,.txt,.py
 | `--dir` | 要扫描的目录 |
 | `--namespace` | 存入的命名空间 |
 | `--ext` | 文件扩展名，逗号分隔（默认 `.md,.txt,.py`） |
+
+## 上下文压缩 (headroom 集成)
+
+Agent-Memory 负责**选对**记忆（pack_context/hybrid_search）；集成的 [headroom](https://github.com/headroomlabs-ai/headroom) 负责**压小**记忆内容——两者叠加：同 token 预算塞进更多条记忆，且**可逆**（LLM 随时按 key 取回原文）。
+
+### 工作方式
+- headroom 按内容类型自动路由（headroom 0.27 实测）：**JSON/结构化 → SmartCrusher（约省 60%）、日志 → LogCompressor（约省 95%）效果显著**；代码/散文常被路由判为 no-op 直接原样返回（headroom 默认对 user 消息保守，本集成已开 `compress_user_messages=True` 尽力压缩，但仍非所有内容都能压）。**压不了的就诚实 passthrough**，不损坏内容。
+- `compress=true` 时，`pack_context` 把每条记忆内容压缩后再打包，块更小→同预算纳入更多条；每块带 `retrieve="<key>"`，LLM 调 `headroom_retrieve(key)` 取回完整原文。
+- **可逆性跨进程**：压缩原文镜像到持久卷 `HEADROOM_CCR_DIR`，REST 长驻容器与每次 `docker run` 的 MCP 容器共享同一份，所以 REST 端压缩、MCP 端取回能互通。
+
+### 两种用法
+1. **记忆注入时自动压缩**：`pack_context(..., compress=true)` / `POST /api/memory/pack` body 加 `"compress": true`。
+2. **任意文本按需压缩**：MCP `headroom_compress(text)` 或 `POST /api/compress` `{text, language?}`，取回用 `headroom_retrieve(key)` / `GET /api/compress/retrieve?key=`。
+
+### 可选依赖 / 优雅降级（重要）
+headroom 是**可选依赖**，在 Dockerfile 里用**尽力重试**的单独层安装（拉 PyTorch + Kompress + hnswlib，需 `build-essential` 编译，体积大）。**网络不稳时镜像仍能构建**——此时压缩自动降级为"原样返回"（passthrough），其它功能完全不受影响。查可用性：
+- MCP：`headroom_stats()`
+- REST：`GET /api/compress/stats` → `{"available": true/false, "ccr_dir": ..., "error": ...}`
+
+> **受限网络构建**（关键）：Docker 容器**直连** PyPI 会被 GFW 篡改（hash mismatch / SSL EOF），导致 torch 等大包装不上。构建时让 BuildKit 走你的本地代理（Mihomo/Clash 的 mixed-port，常见 7897）：
+> ```bash
+> HTTPS_PROXY=http://host.docker.internal:7897 HTTP_PROXY=http://host.docker.internal:7897 docker compose build backend
+> ```
+> （BuildKit 会把这两个变量透传给构建步骤里的 pip。）代理端口按你实际配置改。装上后压缩即自动生效。
+
+### 体积取舍
+- 当前装的是 `headroom-ai[all]`（含 `[ml]`：PyTorch + Kompress；镜像约 +1GB，另有 `build-essential` ~200MB）。
+- 实测：JSON/日志压缩收益最大（60-95%），代码/散文常 passthrough。想要更小镜像且不在意这些，可把 Dockerfile 里的 `headroom-ai[all]` 改成 `headroom-ai[code]`（无 PyTorch）。
 
 ## 知识图谱 (Graphify 集成)
 

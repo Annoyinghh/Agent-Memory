@@ -23,6 +23,13 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from memory_engine import MemoryEngine
 from task_manager import task_manager
+# Optional headroom-backed reversible compression (graceful no-op if unavailable).
+try:
+    from compression import compress_text, retrieve as _ccr_retrieve, stats as _ccr_stats
+except Exception:  # pragma: no cover - optional module
+    compress_text = None
+    _ccr_retrieve = None
+    _ccr_stats = None
 import asyncio
 import gzip
 import json
@@ -103,11 +110,26 @@ class PackRequest(BaseModel):
     namespace: str
     query: str
     max_tokens: int = 2000
+    compress: bool = False
 
 class PackResponse(BaseModel):
     query: str
     namespace: str
     packed_context: str
+    compressed: bool = False
+    ratio: Optional[float] = None
+
+class CompressRequest(BaseModel):
+    text: str
+    language: Optional[str] = None
+
+class CompressResponse(BaseModel):
+    compressed: str
+    key: Optional[str] = None
+    original_tokens: int
+    compressed_tokens: int
+    ratio: float
+    method: str
 
 class SnapshotRequest(BaseModel):
     namespace: str
@@ -261,9 +283,46 @@ def search_memory(req: SearchRequest):
 
 @app.post("/api/memory/pack", response_model=PackResponse)
 def pack_context(req: PackRequest):
-    """在 token 预算内组装最优上下文"""
-    packed = engine.pack_context(req.namespace, req.query, req.max_tokens)
-    return PackResponse(query=req.query, namespace=req.namespace, packed_context=packed)
+    """在 token 预算内组装最优上下文(compress=True 时用 headroom 压缩每条记忆,可逆)"""
+    packed = engine.pack_context(req.namespace, req.query, req.max_tokens, compress=req.compress)
+    stats = getattr(engine, "last_pack_stats", None) if req.compress else None
+    return PackResponse(
+        query=req.query,
+        namespace=req.namespace,
+        packed_context=packed,
+        compressed=bool(req.compress and stats),
+        ratio=(stats.get("ratio") if stats else None),
+    )
+
+
+@app.post("/api/compress", response_model=CompressResponse)
+def compress_text_endpoint(req: CompressRequest):
+    """用 headroom 压缩任意文本(代码/JSON/日志/散文),可逆——原文用 /api/compress/retrieve 取回。headroom 不可用时原样返回。"""
+    if compress_text is None:
+        ot = max(0, len(req.text) // 4)
+        return CompressResponse(compressed=req.text, key=None, original_tokens=ot,
+                                compressed_tokens=ot, ratio=1.0, method="passthrough")
+    r = compress_text(req.text, language=req.language)
+    return CompressResponse(**r)
+
+
+@app.get("/api/compress/retrieve")
+def retrieve_compressed(key: str = Query(...)):
+    """按 key 取回 headroom 压缩前的完整原文(REST 容器与每次 MCP 调用共享同一 CCR 缓存卷)。"""
+    if _ccr_retrieve is None:
+        raise HTTPException(status_code=503, detail="compression module unavailable")
+    full = _ccr_retrieve(key)
+    if full is None:
+        raise HTTPException(status_code=404, detail=f"no original found for key '{key}'")
+    return {"key": key, "original": full}
+
+
+@app.get("/api/compress/stats")
+def compress_stats():
+    """报告 headroom 压缩是否可用及配置(可用性、CCR 缓存目录、错误)。前端可据此显示压缩状态。"""
+    if _ccr_stats is None:
+        return {"available": False, "error": "compression module unavailable"}
+    return _ccr_stats()
 
 
 @app.post("/api/memory/short_term", response_model=ShortTermMemoryResponse)
