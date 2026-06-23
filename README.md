@@ -313,7 +313,7 @@ python ingest.py --dir ./your-docs --namespace myproject --ext .md,.txt,.py
 
 ## 知识图谱 (Graphify 集成)
 
-基于 [Graphify](https://github.com/getgrasp/graphify) 的 tree-sitter AST 提取，将代码库转换为可查询的知识图谱。
+基于 [Graphify](https://github.com/getgrasp/graphify) 的 tree-sitter AST 提取，将代码库转换为可查询的知识图谱。引擎源码已**内嵌**在本仓库 `Agent-Memory-Graphify/`（vendored 普通文件，非 submodule；仅保留 `graphify/` 包 + `pyproject.toml`/`LICENSE`/`README.md`，构建时 `pip install` 进后端镜像）。
 
 ### 工作原理
 
@@ -545,7 +545,7 @@ Agent-Memory/
 │       ├── agent_memory.db      # SQLite 元数据 (FTS5 + 图谱 + 清单 + sessions)
 │       ├── chroma_db/           # ChromaDB 向量
 │       └── backups/             # namespace 备份 (.json.gz，备份/恢复功能产物)
-├── Agent-Memory-Graphify/       # Graphify 源码（AST 提取引擎，构建时打包进后端镜像）
+├── Agent-Memory-Graphify/       # Graphify 引擎源码（内嵌 vendored 文件，非 submodule；仅 graphify/ 包 + pyproject/LICENSE/README，构建时 pip install 进后端镜像）
 └── Agent-memory-ui/             # Next.js 前端
     ├── Dockerfile               # 前端镜像（standalone 多阶段构建）
     ├── next.config.mjs          # output:standalone + /api 反向代理 rewrites
