@@ -16,7 +16,7 @@ if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -24,6 +24,7 @@ from typing import List, Dict, Any, Optional
 from memory_engine import MemoryEngine
 from task_manager import task_manager
 import asyncio
+import gzip
 import json
 import threading
 
@@ -732,6 +733,75 @@ def clear_graph_namespace(req: GraphClearRequest):
     _check_protected(req.namespace)
     deleted = engine.clear_namespace(req.namespace)
     return DeleteResponse(deleted_count=deleted, message=f"cleared namespace '{req.namespace}'")
+
+# ============================================================
+# Backup / Restore (namespace snapshot incl. ChromaDB vectors)
+# ============================================================
+
+@app.get("/api/backup")
+def backup_namespace(namespace: str = Query(...)):
+    """导出一个 namespace 的完整快照（记忆 + 图谱 + 向量 + sessions + 工作记忆）
+    为 .json.gz 文件下载。同步返回；只读，永远允许（即便受保护 namespace）。
+
+    向量原样导出，因此恢复时无需重新向量化。
+    """
+    data = engine.export_namespace(namespace)
+    raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    compressed = gzip.compress(raw)
+    ts = data.get("exported_at") or 0
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in namespace)
+    filename = f"{safe}_{ts}.json.gz"
+    return StreamingResponse(
+        io.BytesIO(compressed),
+        media_type="application/gzip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+@app.post("/api/restore")
+def restore_namespace(
+    file: UploadFile = File(...),
+    target_namespace: Optional[str] = Query(None, description="目标 namespace（默认=备份里的 namespace）"),
+):
+    """从上传的 .json.gz 备份恢复一个 namespace（后台任务，返回 task_id 轮询）。
+
+    REPLACE 语义：先清空目标 namespace 再导入，保留原始 id/时间戳/向量（不重新
+    向量化）。受保护 namespace 拒绝恢复（403）。
+    """
+    raw = file.file.read()
+    try:
+        if (file.filename or "").endswith(".gz"):
+            raw = gzip.decompress(raw)
+        data = json.loads(raw.decode("utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"无法解析备份文件: {e}")
+    if not isinstance(data, dict) or data.get("format") != "agent-memory-backup":
+        raise HTTPException(status_code=400, detail="不是 agent-memory 备份文件（format 字段不符）")
+
+    target = target_namespace or data.get("namespace")
+    if not target:
+        raise HTTPException(status_code=400, detail="备份无 namespace 且未指定 target_namespace")
+    _check_protected(target)
+
+    task_id = task_manager.create_task()
+
+    def run_restore_task():
+        def progress_callback(stage, current, total, message):
+            task_manager.update_progress(task_id, stage, current, total, message)
+        try:
+            result = engine.import_namespace(
+                data, target_namespace=target, progress_callback=progress_callback
+            )
+            task_manager.complete_task(task_id, result)
+        except Exception as e:
+            import traceback
+            task_manager.fail_task(task_id, f"{str(e)}\n{traceback.format_exc()}")
+
+    threading.Thread(target=run_restore_task, daemon=True).start()
+    return {
+        "task_id": task_id,
+        "namespace": target,
+        "message": "恢复任务已创建（将清空目标 namespace 后导入）",
+    }
 
 @app.get("/api/tasks/{task_id}")
 def get_task_status(task_id: str):

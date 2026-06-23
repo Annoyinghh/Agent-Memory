@@ -38,7 +38,7 @@ class MemoryEngine:
         os.makedirs(db_dir, exist_ok=True)
 
         # 1. Initialize SQLite (FTS5 + Metadata)
-        self.sqlite_path = os.path.join(db_dir, "memory_metadata.db")
+        self.sqlite_path = os.path.join(db_dir, "agent_memory.db")
         self.conn = sqlite3.connect(self.sqlite_path, check_same_thread=False)
         self.cursor = self.conn.cursor()
         self._init_sqlite()
@@ -210,6 +210,7 @@ class MemoryEngine:
         
         return doc_id
 
+    @db_lock
     def freeze_snapshot(self, namespace: str, summary: str, doc_id: str) -> str:
         """A snapshot is a special high-priority memory."""
         # Source explicitly marked as 'snapshot'
@@ -670,15 +671,345 @@ Conversation:
             return 0
         for i in range(0, len(ids), 500):
             self.collection.delete(ids=ids[i:i + 500])
-        placeholders = ",".join(["?"] * len(ids))
-        self.cursor.execute(
-            f"DELETE FROM memory_edges WHERE from_id IN ({placeholders}) OR to_id IN ({placeholders})",
-            ids + ids,
-        )
-        self.cursor.execute(f"DELETE FROM graph_nodes WHERE id IN ({placeholders})", ids)
-        self.cursor.execute(f"DELETE FROM memory_stats WHERE id IN ({placeholders})", ids)
-        self.cursor.execute(f"DELETE FROM memory_fts WHERE id IN ({placeholders})", ids)
+        # SQLite caps the number of bound variables per statement (default 999,
+        # up to 32766). A large namespace yields 20k+ ids — the edges delete
+        # alone would bind 40k. Batch every delete in chunks of 500 so we never
+        # blow the limit (which raises OperationalError mid-transaction and
+        # corrupts the clear).
+        batch = 500
+        for i in range(0, len(ids), batch):
+            chunk = ids[i:i + batch]
+            ph = ",".join(["?"] * len(chunk))
+            self.cursor.execute(
+                f"DELETE FROM memory_edges WHERE from_id IN ({ph}) OR to_id IN ({ph})",
+                chunk + chunk,
+            )
+            self.cursor.execute(f"DELETE FROM graph_nodes WHERE id IN ({ph})", chunk)
+            self.cursor.execute(f"DELETE FROM memory_stats WHERE id IN ({ph})", chunk)
+            self.cursor.execute(f"DELETE FROM memory_fts WHERE id IN ({ph})", chunk)
         return len(ids)
+
+    @db_lock
+    def clear_namespace_all(self, namespace: str) -> int:
+        """Wipe EVERYTHING for a namespace — the five stores clear_namespace
+        already covers (vectors, fts, stats, edges, graph_nodes) PLUS the four
+        it omits (working_memory, memory_sessions, session_memories,
+        graph_manifest). Used by restore so an import is a faithful REPLACE,
+        not a union with whatever was there before. Returns node count removed.
+        """
+        self.cursor.execute("SELECT id FROM memory_fts WHERE namespace=?", (namespace,))
+        ids = [row[0] for row in self.cursor.fetchall()]
+        self.cursor.execute("SELECT id FROM memory_sessions WHERE namespace=?", (namespace,))
+        session_ids = [row[0] for row in self.cursor.fetchall()]
+
+        removed = self._delete_nodes_by_ids(ids)  # chroma/edges/graph_nodes/stats/fts
+        if session_ids:
+            placeholders = ",".join(["?"] * len(session_ids))
+            self.cursor.execute(
+                f"DELETE FROM session_memories WHERE session_id IN ({placeholders})",
+                session_ids,
+            )
+        self.cursor.execute("DELETE FROM working_memory WHERE namespace=?", (namespace,))
+        self.cursor.execute("DELETE FROM memory_sessions WHERE namespace=?", (namespace,))
+        self.cursor.execute("DELETE FROM graph_manifest WHERE namespace=?", (namespace,))
+        self.conn.commit()
+        return removed
+
+    @db_lock
+    def export_namespace(self, namespace: str) -> dict:
+        """Export a complete, portable snapshot of a namespace: every memory
+        (content + stats + its raw ChromaDB embedding), graph nodes/edges, the
+        extraction manifest, sessions, and working memory. Short-term memory is
+        intentionally excluded (volatile by design). The returned dict is the
+        single source of truth consumed by all three entry points (REST / MCP /
+        CLI) for serialization.
+
+        Vectors are exported verbatim so restore can re-add them with
+        `embeddings=` and skip re-embedding entirely.
+        """
+        # 1. Core memories: content lives in memory_fts, stats alongside.
+        self.cursor.execute(
+            "SELECT id, content, source, timestamp FROM memory_fts WHERE namespace=?",
+            (namespace,),
+        )
+        fts_rows = self.cursor.fetchall()
+        ids = [r[0] for r in fts_rows]
+
+        stats_map = {}
+        if ids:
+            placeholders = ",".join(["?"] * len(ids))
+            self.cursor.execute(
+                f"SELECT id, access_count, is_pinned FROM memory_stats WHERE id IN ({placeholders})",
+                ids,
+            )
+            for sid, ac, pin in self.cursor.fetchall():
+                stats_map[sid] = (ac or 0, int(pin or 0))
+
+        # 2. Raw embeddings from ChromaDB keyed by id (batched to stay safe on
+        # very large namespaces). include=["embeddings"] pulls the stored vector
+        # back out verbatim.
+        emb_map = {}
+        for i in range(0, len(ids), 500):
+            batch = ids[i:i + 500]
+            try:
+                got = self.collection.get(ids=batch, include=["embeddings"])
+            except Exception:
+                got = {}
+            got_ids = got.get("ids") or []
+            got_embs = got.get("embeddings")
+            if got_embs is None:
+                got_embs = []
+            for bid, emb in zip(got_ids, got_embs):
+                # Normalize to a plain Python float list: chroma may hand back
+                # numpy arrays, which json.dumps cannot serialize.
+                emb_map[bid] = [float(x) for x in emb] if emb is not None else None
+
+        memories = []
+        for mid, content, source, ts in fts_rows:
+            ac, pin = stats_map.get(mid, (0, 0))
+            memories.append({
+                "id": mid,
+                "content": content,
+                "source": source,
+                "timestamp": ts,
+                "access_count": ac,
+                "is_pinned": pin,
+                "embedding": emb_map.get(mid),  # None if the vector is missing
+            })
+
+        # 3. Graph provenance + edges. Edges belong to the namespace whose node
+        # originates them (from_id in the namespace's id set).
+        graph_nodes = []
+        edges = []
+        if ids:
+            placeholders = ",".join(["?"] * len(ids))
+            self.cursor.execute(
+                f"SELECT id, node_type, source_file, source_location, file_type, "
+                f"community_id, external_id FROM graph_nodes WHERE id IN ({placeholders})",
+                ids,
+            )
+            for r in self.cursor.fetchall():
+                graph_nodes.append({
+                    "id": r[0], "node_type": r[1], "source_file": r[2],
+                    "source_location": r[3], "file_type": r[4],
+                    "community_id": r[5], "external_id": r[6],
+                })
+            self.cursor.execute(
+                f"SELECT from_id, to_id, relation_type, confidence, created_at "
+                f"FROM memory_edges WHERE from_id IN ({placeholders})",
+                ids,
+            )
+            for r in self.cursor.fetchall():
+                edges.append({
+                    "from_id": r[0], "to_id": r[1], "relation": r[2],
+                    "confidence": r[3], "created_at": r[4],
+                })
+
+        # 4. Manifest, sessions (+ links), working memory.
+        self.cursor.execute(
+            "SELECT source_file, content_hash, imported_at FROM graph_manifest WHERE namespace=?",
+            (namespace,),
+        )
+        manifest = [{"source_file": r[0], "content_hash": r[1], "imported_at": r[2]}
+                    for r in self.cursor.fetchall()]
+
+        self.cursor.execute(
+            "SELECT id, created_at, last_active, status FROM memory_sessions WHERE namespace=?",
+            (namespace,),
+        )
+        session_rows = self.cursor.fetchall()
+        sessions = [{"id": r[0], "created_at": r[1], "last_active": r[2], "status": r[3]}
+                    for r in session_rows]
+        session_ids = [s["id"] for s in sessions]
+        session_memories = []
+        if session_ids:
+            placeholders = ",".join(["?"] * len(session_ids))
+            self.cursor.execute(
+                f"SELECT session_id, memory_id, created_at FROM session_memories "
+                f"WHERE session_id IN ({placeholders})",
+                session_ids,
+            )
+            for r in self.cursor.fetchall():
+                session_memories.append({"session_id": r[0], "memory_id": r[1], "created_at": r[2]})
+
+        self.cursor.execute(
+            "SELECT key, value, timestamp FROM working_memory WHERE namespace=?",
+            (namespace,),
+        )
+        working = [{"key": r[0], "value": r[1], "timestamp": r[2]} for r in self.cursor.fetchall()]
+
+        return {
+            "format": "agent-memory-backup",
+            "version": 1,
+            "exported_at": int(time.time()),
+            "namespace": namespace,
+            "counts": {
+                "memories": len(memories),
+                "graph_nodes": len(graph_nodes),
+                "graph_edges": len(edges),
+                "graph_manifest": len(manifest),
+                "sessions": len(sessions),
+                "session_memories": len(session_memories),
+                "working_memory": len(working),
+            },
+            "memories": memories,
+            "graph_nodes": graph_nodes,
+            "graph_edges": edges,
+            "graph_manifest": manifest,
+            "sessions": sessions,
+            "session_memories": session_memories,
+            "working_memory": working,
+        }
+
+    @db_lock
+    def import_namespace(self, data: dict, target_namespace: str = None, progress_callback=None) -> dict:
+        """Restore a namespace from an export_namespace() snapshot.
+
+        REPLACE semantics: the target namespace is cleared fully first
+        (clear_namespace_all), then every row is re-inserted with its ORIGINAL
+        doc_id / timestamp / access_count / is_pinned / community_id preserved.
+        Because ids are preserved, graph edges need no external_id re-resolution
+        (from_id/to_id are already internal ids) and dedup is disabled. Chroma
+        vectors are re-added with `embeddings=` so no re-embedding happens — a
+        9k-node restore is seconds, not minutes.
+
+        target_namespace defaults to the snapshot's own namespace; set it to
+        import into a DIFFERENT namespace (copy/migrate). Protected-namespace
+        checks are the caller's responsibility.
+        """
+        def report(stage, current, total, message):
+            if progress_callback:
+                progress_callback(stage, current, total, message)
+
+        if not isinstance(data, dict) or data.get("format") != "agent-memory-backup":
+            raise ValueError("Not an agent-memory backup (missing/invalid 'format' field)")
+        target = target_namespace or data.get("namespace")
+        if not target:
+            raise ValueError("Backup has no namespace and no target_namespace given")
+
+        memories = data.get("memories", [])
+        total_units = len(memories) or 1
+        report("clear", 0, 1, f"清空目标 namespace '{target}'...")
+        self.clear_namespace_all(target)
+        report("clear", 1, 1, "已清空")
+
+        # 1. memories -> memory_fts + memory_stats (preserve original values)
+        report("sqlite", 0, total_units, "写入记忆 (FTS + stats)...")
+        if memories:
+            fts_rows = [
+                (m["id"], target, m.get("content", ""), m.get("source", ""), m.get("timestamp", 0))
+                for m in memories
+            ]
+            stats_rows = [
+                (m["id"], m.get("access_count", 0), m.get("is_pinned", 0))
+                for m in memories
+            ]
+            self.cursor.executemany(
+                "INSERT INTO memory_fts (id, namespace, content, source, timestamp) VALUES (?, ?, ?, ?, ?)",
+                fts_rows,
+            )
+            self.cursor.executemany(
+                "INSERT OR REPLACE INTO memory_stats (id, access_count, is_pinned) VALUES (?, ?, ?)",
+                stats_rows,
+            )
+            self.conn.commit()
+        report("sqlite", total_units, total_units, "FTS + stats 写入完成")
+
+        # 2. chroma vectors — skip re-embedding when an embedding is present.
+        # Embeddings are the bulk of the snapshot's memory (~384 floats each);
+        # release each one right after its batch is written so the resident
+        # footprint ramps DOWN as the chroma index ramps UP (avoids OOM on
+        # large namespaces restored into an already-populated collection).
+        report("chroma", 0, total_units, "写入 ChromaDB 向量...")
+        with_emb = [m for m in memories if m.get("embedding") is not None]
+        without_emb = [m for m in memories if m.get("embedding") is None]
+        batch_size = 50
+        for start in range(0, len(with_emb), batch_size):
+            batch = with_emb[start:start + batch_size]
+            self.collection.add(
+                ids=[m["id"] for m in batch],
+                documents=[m.get("content", "") for m in batch],
+                metadatas=[{"namespace": target, "source": m.get("source", ""),
+                            "timestamp": m.get("timestamp", 0)} for m in batch],
+                embeddings=[m["embedding"] for m in batch],
+            )
+            # Free this batch's float lists now that chroma has them.
+            for m in batch:
+                m["embedding"] = None
+            done = min(start + batch_size, len(with_emb))
+            report("chroma", done, total_units, f"向量进度 {done}/{len(with_emb)}")
+        # Fall back: memories whose vector was missing in the export get embedded now.
+        for start in range(0, len(without_emb), batch_size):
+            batch = without_emb[start:start + batch_size]
+            self.collection.add(
+                ids=[m["id"] for m in batch],
+                documents=[m.get("content", "") for m in batch],
+                metadatas=[{"namespace": target, "source": m.get("source", ""),
+                            "timestamp": m.get("timestamp", 0)} for m in batch],
+            )
+        report("chroma", total_units, total_units, "ChromaDB 写入完成")
+
+        # 3. graph nodes (preserve community_id / external_id), edges, manifest
+        report("graph", 0, 1, "写入图谱节点...")
+        gn = data.get("graph_nodes", [])
+        if gn:
+            self.cursor.executemany(
+                "INSERT OR REPLACE INTO graph_nodes (id, node_type, source_file, source_location, "
+                "file_type, community_id, external_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [(n.get("id"), n.get("node_type"), n.get("source_file"), n.get("source_location"),
+                  n.get("file_type"), n.get("community_id"), n.get("external_id")) for n in gn],
+            )
+        edges = data.get("graph_edges", [])
+        if edges:
+            self.cursor.executemany(
+                "INSERT OR IGNORE INTO memory_edges (from_id, to_id, relation_type, confidence, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [(e.get("from_id"), e.get("to_id"), e.get("relation"), e.get("confidence", 1.0),
+                  e.get("created_at")) for e in edges],
+            )
+        manifest = data.get("graph_manifest", [])
+        if manifest:
+            self.cursor.executemany(
+                "INSERT OR REPLACE INTO graph_manifest (namespace, source_file, content_hash, imported_at) "
+                "VALUES (?, ?, ?, ?)",
+                [(target, m.get("source_file"), m.get("content_hash"), m.get("imported_at")) for m in manifest],
+            )
+        self.conn.commit()
+        report("graph", 1, 1, f"图谱写入完成: {len(gn)} 节点 / {len(edges)} 边")
+
+        # 4. sessions + links + working memory
+        report("sessions", 0, 1, "写入 sessions / working memory...")
+        sessions = data.get("sessions", [])
+        if sessions:
+            self.cursor.executemany(
+                "INSERT OR REPLACE INTO memory_sessions (id, namespace, created_at, last_active, status) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [(s.get("id"), target, s.get("created_at"), s.get("last_active"), s.get("status", "active"))
+                 for s in sessions],
+            )
+        sm = data.get("session_memories", [])
+        if sm:
+            self.cursor.executemany(
+                "INSERT OR IGNORE INTO session_memories (session_id, memory_id, created_at) VALUES (?, ?, ?)",
+                [(x.get("session_id"), x.get("memory_id"), x.get("created_at")) for x in sm],
+            )
+        wm = data.get("working_memory", [])
+        if wm:
+            self.cursor.executemany(
+                "INSERT OR REPLACE INTO working_memory (namespace, key, value, timestamp) VALUES (?, ?, ?, ?)",
+                [(target, w.get("key"), w.get("value"), w.get("timestamp")) for w in wm],
+            )
+        self.conn.commit()
+        report("complete", 1, 1, "恢复完成")
+
+        return {
+            "namespace": target,
+            "memories_imported": len(memories),
+            "graph_nodes_imported": len(gn),
+            "edges_imported": len(edges),
+            "sessions_imported": len(sessions),
+            "working_memory_imported": len(wm),
+        }
 
     @db_lock
     def clear_files_in_namespace(self, namespace: str, source_files) -> int:
@@ -827,6 +1158,7 @@ Conversation:
                 result.append({"id": memory_id, "content": row[0], "source": row[1], "timestamp": row[2], "linked_at": linked_at})
         return result
 
+    @db_lock
     def get_session_context(self, session_id: str, max_tokens: int = 2000) -> str:
         session = self.get_session(session_id)
         if not session:

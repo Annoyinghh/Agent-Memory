@@ -487,6 +487,85 @@ def sync_codebase(target_dir: str, namespace: str, incremental: bool = False) ->
             f"then re-imported {nodes} nodes / {edges} edges.")
 
 
+@mcp.tool()
+def backup_namespace(namespace: str, out_path: str = "") -> str:
+    """
+    Export a namespace's complete snapshot (memories + graph + raw ChromaDB
+    vectors + sessions + working memory) to a .json.gz file. Faithful, portable,
+    and restore-able. Vectors are stored verbatim so restore skips re-embedding.
+
+    Backup is read-only — always allowed, even on a protected namespace. The
+    default output lives inside the persistent data volume (<data-dir>/backups/)
+    so the file survives container restarts and is visible on the host.
+
+    Args:
+        namespace: The namespace to back up.
+        out_path: Optional output file path. Defaults to <data-dir>/backups/<ns>_<ts>.json.gz.
+    """
+    import gzip, json, os, time
+    data = engine.export_namespace(namespace)
+    if not out_path:
+        data_dir = os.path.dirname(engine.sqlite_path)
+        backups_dir = os.path.join(data_dir, "backups")
+        os.makedirs(backups_dir, exist_ok=True)
+        safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in namespace)
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        out_path = os.path.join(backups_dir, f"{safe}_{ts}.json.gz")
+    out_path = os.path.abspath(out_path)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with gzip.open(out_path, "wb") as f:
+        f.write(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+    c = data["counts"]
+    size_kb = os.path.getsize(out_path) / 1024
+    return (f"Backed up namespace '{namespace}' -> {out_path} ({size_kb:.1f} KB). "
+            f"memories={c['memories']} graph_nodes={c['graph_nodes']} "
+            f"edges={c['graph_edges']} manifest={c['graph_manifest']} "
+            f"sessions={c['sessions']} working_memory={c['working_memory']}. "
+            f"Restore with restore_namespace(file_path=\"{out_path}\").")
+
+
+@mcp.tool()
+def restore_namespace(file_path: str, target_namespace: str = "") -> str:
+    """
+    Restore a namespace from a .json.gz produced by backup_namespace (or
+    GET /api/backup). REPLACE semantics: clears the target namespace first,
+    then re-imports everything with original ids/timestamps/vectors (no
+    re-embedding). Refused on a protected namespace.
+
+    For very large namespaces this may exceed an MCP tool-call timeout — in
+    that case use the REST endpoint POST /api/restore instead (async task with
+    progress polling).
+
+    Args:
+        file_path: Path to the .json.gz backup file.
+        target_namespace: Namespace to restore into. Defaults to the backup's own namespace.
+    """
+    import gzip, json, os
+    if not os.path.exists(file_path):
+        return f"Backup file not found: {file_path}"
+    try:
+        with gzip.open(file_path, "rb") as f:
+            data = json.loads(f.read().decode("utf-8"))
+    except Exception as e:
+        return f"Failed to read/parse backup: {e}"
+    if not isinstance(data, dict) or data.get("format") != "agent-memory-backup":
+        return f"Not an agent-memory backup: {file_path}"
+    target = target_namespace or data.get("namespace")
+    if not target:
+        return "Backup has no namespace and no target_namespace given."
+    if engine.is_protected(target):
+        return (f"Refused: target namespace '{target}' is protected (read-only). "
+                f"Unprotect it first.")
+
+    result = engine.import_namespace(data, target_namespace=target)
+    return (f"Restored namespace '{result['namespace']}': "
+            f"memories={result['memories_imported']} "
+            f"graph_nodes={result['graph_nodes_imported']} "
+            f"edges={result['edges_imported']} "
+            f"sessions={result['sessions_imported']} "
+            f"working_memory={result['working_memory_imported']}.")
+
+
 if __name__ == "__main__":
     print("Agent Memory MCP Server starting up...", file=sys.stderr)
     mcp.run()

@@ -668,4 +668,31 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ namespace, query, max_results: maxResults, context_lines: contextLines }),
     }),
+
+  /**
+   * Restore a namespace from a backup file (returns task ID for polling)
+   * @param {File} file - The uploaded .json.gz file object
+   * @param {string} [targetNamespace] - Optional. Target namespace to restore to.
+   * @returns {Promise<{task_id: string, namespace: string, message: string}>}
+   */
+  restoreNamespace: (file, targetNamespace = null) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    let url = '/api/restore';
+    if (targetNamespace) {
+      url += `?target_namespace=${encodeURIComponent(targetNamespace)}`;
+    }
+    
+    return fetch(`${BASE_URL}${url}`, {
+      method: 'POST',
+      body: formData,
+    }).then(async (res) => {
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData?.detail || `HTTP Error: ${res.status}`);
+      }
+      return res.json();
+    });
+  },
 };

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
-import { api } from '@/lib/api';
+import { api, BASE_URL } from '@/lib/api';
 import GlassCard from '@/components/GlassCard';
 import DigitalAvatar from '@/components/DigitalAvatar';
 import KnowledgeGraph from '@/components/KnowledgeGraph';
@@ -316,6 +316,14 @@ export default function SPAHomepage() {
   const [consolidationMessage, setConsolidationMessage] = useState(null);
   const [consolidationId, setConsolidationId] = useState(null);
 
+  // Backup & Restore State & Logic
+  const [restoreFile, setRestoreFile] = useState(null);
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [restoreTaskId, setRestoreTaskId] = useState(null);
+  const [restoreProgress, setRestoreProgress] = useState(null); // { status, stage, current, total, message, percent }
+  const [restoreError, setRestoreError] = useState(null);
+  const [restoreSuccess, setRestoreSuccess] = useState(false);
+
   // ────────────────────────────────────────────────────────
   // 4. Session Management (P2) State & Logic
   // ────────────────────────────────────────────────────────
@@ -526,6 +534,99 @@ export default function SPAHomepage() {
       console.error(err);
       alert('解除保护失败');
     }
+  };
+
+  const handleExportBackup = () => {
+    if (!activeNamespace || activeNamespace === 'all') {
+      alert('请先选择一个具体的命名空间进行备份');
+      return;
+    }
+    window.location.href = `${BASE_URL}/api/backup?namespace=${encodeURIComponent(activeNamespace)}`;
+  };
+
+  const handleRestoreBackup = async (e) => {
+    if (e) e.preventDefault();
+    if (!activeNamespace || activeNamespace === 'all') {
+      alert('请先选择一个具体的命名空间进行恢复');
+      return;
+    }
+    if (!restoreFile) {
+      alert('请先选择要上传的备份文件 (.json.gz)');
+      return;
+    }
+
+    if (!confirm(`⚠️ 警告：恢复备份将会彻底清空并覆盖命名空间「${activeNamespace}」中的所有现有数据（包括记忆、图谱及会话）！确定要继续吗？`)) {
+      return;
+    }
+
+    setRestoreLoading(true);
+    setRestoreError(null);
+    setRestoreSuccess(false);
+    setRestoreProgress(null);
+
+    try {
+      const res = await api.restoreNamespace(restoreFile, activeNamespace);
+      if (res && res.task_id) {
+        setRestoreTaskId(res.task_id);
+        startPollingRestoreTask(res.task_id);
+      } else {
+        throw new Error('未返回 task_id');
+      }
+    } catch (err) {
+      console.error('[Restore] Failed:', err);
+      setRestoreError(err.message || '恢复任务启动失败');
+      setRestoreLoading(false);
+    }
+  };
+
+  const startPollingRestoreTask = (taskId) => {
+    if (window.activeRestoreInterval) {
+      clearInterval(window.activeRestoreInterval);
+    }
+    const intervalId = setInterval(async () => {
+      try {
+        const task = await api.getTaskStatus(taskId);
+        
+        // Update progress state
+        setRestoreProgress({
+          status: task.status,
+          stage: task.stage,
+          current: task.current,
+          total: task.total,
+          message: task.message,
+          percent: task.percent
+        });
+
+        if (task.status === 'completed' || task.status === 'complete') {
+          clearInterval(intervalId);
+          setRestoreLoading(false);
+          setRestoreTaskId(null);
+          setRestoreSuccess(true);
+          setRestoreFile(null);
+          
+          // Clear file input manually
+          const fileInput = document.getElementById('restore-file-input');
+          if (fileInput) fileInput.value = '';
+
+          // Refresh dashboard data
+          await refreshData({
+            type: 'insert',
+            namespace: activeNamespace,
+            message: `备份恢复成功！命名空间「${activeNamespace}」数据已重建。`
+          });
+        } else if (task.status === 'failed' || task.status === 'error') {
+          clearInterval(intervalId);
+          setRestoreLoading(false);
+          setRestoreTaskId(null);
+          setRestoreError(task.error || '备份恢复任务失败');
+        }
+      } catch (err) {
+        console.error('[Restore Polling] Error:', err);
+      }
+    }, 1500);
+
+    // Store interval ID in window so we can clear it if needed
+    window.activeRestoreInterval = intervalId;
   };
 
   const fetchMemoryLayersData = async () => {
@@ -2234,6 +2335,105 @@ export default function SPAHomepage() {
                         ))}
                       </div>
                     )}
+                  </GlassCard>
+
+                  {/* Backup & Restore Panel */}
+                  <GlassCard title="数据备份与恢复 (Backup & Restore)" glowColor="purple" className="op-panel-card" style={{ marginTop: '20px' }}>
+                    <div style={{ padding: '10px 0', fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'hsl(var(--text-muted))', lineHeight: '1.6', borderBottom: '1px dashed rgba(138, 43, 226, 0.15)', marginBottom: '14px' }}>
+                      对当前命名空间「<span className="text-cyan">{activeNamespace}</span>」进行本地备份，或从旧的备份文件导入重建完整记忆数据库。
+                    </div>
+                    
+                    {/* Backup Section */}
+                    <div className="sci-form" style={{ marginBottom: '16px', borderBottom: '1px dashed rgba(255,255,255,0.06)', paddingBottom: '16px' }}>
+                      <label style={{ display: 'block', fontSize: '10px', color: 'hsl(var(--text-muted))', marginBottom: '8px', fontFamily: 'var(--font-mono)' }}>1. 导出备份 (Export Backup)</label>
+                      <button
+                        type="button"
+                        onClick={handleExportBackup}
+                        className="sci-submit-btn bg-purple"
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', height: '34px', fontSize: '11px' }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                        </svg>
+                        <span>下载当前命名空间备份 (.json.gz)</span>
+                      </button>
+                    </div>
+
+                    {/* Restore Section */}
+                    <form onSubmit={handleRestoreBackup} className="sci-form">
+                      <label style={{ display: 'block', fontSize: '10px', color: 'hsl(var(--text-muted))', marginBottom: '8px', fontFamily: 'var(--font-mono)' }}>2. 恢复备份 (Restore Backup)</label>
+                      
+                      <div className="form-group-sci" style={{ marginBottom: '12px' }}>
+                        <input
+                          id="restore-file-input"
+                          type="file"
+                          accept=".gz"
+                          onChange={(e) => setRestoreFile(e.target.files[0] || null)}
+                          className="sci-control-input"
+                          style={{
+                            padding: '6px 10px',
+                            fontSize: '11px',
+                            height: '34px',
+                            background: 'rgba(0,0,0,0.3)',
+                            border: '1px solid rgba(255,255,255,0.08)',
+                            color: 'hsl(var(--text-primary))',
+                            cursor: 'pointer'
+                          }}
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={restoreLoading || !restoreFile}
+                        className="sci-submit-btn"
+                        style={{
+                          background: restoreFile ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.04)',
+                          color: restoreFile ? 'hsl(var(--color-green))' : 'hsl(var(--text-muted))',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '8px',
+                          height: '34px',
+                          fontSize: '11px'
+                        }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+                        </svg>
+                        <span>上传并恢复备份</span>
+                      </button>
+
+                      {/* Restore Telemetry / Progress Bar */}
+                      {restoreLoading && restoreProgress && (
+                        <div className="restore-progress-panel font-mono" style={{ marginTop: '14px', padding: '10px', background: 'rgba(0,0,0,0.4)', border: '1px dashed rgba(138, 43, 226, 0.3)', borderRadius: '6px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'hsl(var(--color-purple))', marginBottom: '6px' }}>
+                            <span>[ 恢复进度: {restoreProgress.stage?.toUpperCase() || 'INITIAL'} ]</span>
+                            <span>{restoreProgress.percent || 0}%</span>
+                          </div>
+                          
+                          {/* Progress track */}
+                          <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px', overflow: 'hidden', marginBottom: '8px' }}>
+                            <div style={{ width: `${restoreProgress.percent || 0}%`, height: '100%', background: 'linear-gradient(90deg, hsl(var(--color-purple)), hsl(var(--color-cyan)))', transition: 'width 0.3s ease' }}></div>
+                          </div>
+
+                          <div style={{ fontSize: '9.5px', color: 'white', lineHeight: '1.4' }}>
+                            {restoreProgress.message || '启动恢复任务...'}
+                          </div>
+                        </div>
+                      )}
+
+                      {restoreSuccess && (
+                        <div className="sci-success-banner font-mono" style={{ marginTop: '12px', background: 'rgba(74,222,128,0.08)', color: 'hsl(var(--color-green))', padding: '10px', fontSize: '11px' }}>
+                          [ RESTORE_COMPLETE // 命名空间「{activeNamespace}」备份恢复成功，数据已刷新！ ]
+                        </div>
+                      )}
+
+                      {restoreError && (
+                        <div className="sci-success-banner font-mono" style={{ marginTop: '12px', background: 'rgba(244,63,94,0.08)', color: 'hsl(var(--color-red))', padding: '10px', fontSize: '11px' }}>
+                          [ RESTORE_FAILED // 恢复失败: {restoreError} ]
+                        </div>
+                      )}
+                    </form>
                   </GlassCard>
                 </div>
               </>

@@ -155,13 +155,29 @@ docker compose up -d --build    # 首次构建：拉基础镜像 + chromadb + ~3
 
 ### 数据迁移（把现有库搬到新机器）
 
-数据库在 `Agent-Memory-Server/data/`（SQLite `memory_metadata.db` + `chroma_db/`）。新机器 clone 后是空库。要搬现有数据：把旧机器整个 `data/` 目录拷到新机器的 `Agent-Memory-Server/data/`，再 `docker compose up -d`（容器直接读挂载卷）。
+**推荐：用备份/恢复**（最干净、无 bind mount 风险）。旧机器上：
+
+```bash
+docker exec agent-memory-backend python backup_cli.py backup --namespace <你的ns>
+# 文件在旧机器 ./Agent-Memory-Server/data/backups/<ns>_<ts>.json.gz
+```
+
+把这个 `.json.gz` 拷到新机器，新机器 `docker compose up -d` 起好后用 REST 恢复（见「备份与恢复」章节），或：
+
+```bash
+docker cp <ns>_<ts>.json.gz agent-memory-backend:/app/data/backups/
+docker exec agent-memory-backend python backup_cli.py restore --in /app/data/backups/<ns>_<ts>.json.gz
+```
+
+**备选：直接拷 `data/` 目录**。数据库在 `Agent-Memory-Server/data/`（SQLite `agent_memory.db` + `chroma_db/`）。新机器 clone 后是空库，把旧机器整个 `data/` 目录拷到新机器的 `Agent-Memory-Server/data/`，再 `docker compose up -d`（容器直接读挂载卷）。**注意：务必在容器停止状态下拷贝/替换 `data/`，运行时动它会导致 SQLite/ChromaDB 句柄竞态、数据损坏。**
 
 ### 常见问题
 
 - **全息人头 / 图标消失**：前端 standalone 镜像必须带 `public/`——人头模型 `female_head_final.glb` 和各 SVG 图标都在里面（`DigitalAvatar` 用 `GLTFLoader` 加载 `/female_head_final.glb`）。Dockerfile 已用 `COPY ... /app/public` 处理；若删掉这步，`/female_head_final.glb` 返回 404，人头加载失败消失。Next.js standalone **不会自动拷贝 `public/`**，必须手动 COPY。
 - **改了 `.env` 不生效**：`PROTECTED_NAMESPACES` / LLM key 等运行时变量 `docker compose up -d`（重建容器）即可生效。`NEXT_PUBLIC_*` 类（本项目不使用）才需 `--build` 重建镜像。
 - **MCP 工具报错找不到**：先确认镜像已构建（`docker images | grep agent-memory-server`），且 MCP 配置里的卷路径是**绝对路径**、指向真实存在的 `data/` 目录。
+- **改后端代码不生效 / 镜像还是旧的**：Docker Desktop 的 BuildKit 偶尔会对 `COPY` 层命中缓存、吃不到代码改动。改了 `Agent-Memory-Server/*.py` 后若发现行为没变，用 `docker compose build --no-cache backend` 强制重建。
+- **彻底重置数据库**：停掉容器（`docker compose stop backend`）→ 删除 `data/agent_memory.db`、`data/chroma_db/`（保留 `data/backups/`）→ `docker compose up -d backend` 起空库 → 重新 `extract`。**不要在容器运行时从宿主侧删 DB 文件**——Docker Desktop 的 Windows bind mount 会留下"幽灵句柄"，删掉的文件名（如曾被容器打开）会变成 sqlite 打不开的死路径，只能 `wsl --shutdown` 重置 VM 才能恢复。
 
 ## MCP & Agent Skills 接入
 
@@ -426,7 +442,58 @@ project_overview()
 
 ### 同步还是慢？
 
-全量 rebuild 仍会对**所有文件重新向量化**（耗时主因）。真正的「只同步改动文件」（按 mtime 增量比对）尚未实现；对「项目改完同步一下」的场景，全量 rebuild 已够用且正确。
+全量 `rebuild` 会对**所有文件重新向量化**（耗时主因）。改了几个文件想快速同步时，用**增量更新**（`incremental=true`，见上方「方式一·补充」）——只对内容变化的文件重新向量化，未变文件保留原向量，通常几秒搞定。需要重排社区着色时再用一次全量 `rebuild`。
+
+## 备份与恢复 (Backup / Restore)
+
+把一个 namespace 的**完整快照**（记忆 + 图谱节点/边 + **原始 ChromaDB 向量** + 提取清单 + sessions + 工作记忆）导出为单个 `.json.gz` 文件，可跨机器迁移或从误删/数据损坏中恢复。
+
+**设计要点**：向量原样导出，恢复时直接灌回、**不重新向量化**——9k 节点的恢复是秒级而非分钟级。恢复采用 **REPLACE 语义**（先清空目标 namespace 再导入），保留原始 id / 时间戳 / 访问计数 / 置顶状态 / 社区归属。备份只读、永远允许（即便受保护 namespace）；**恢复到受保护 namespace 会被拒绝**（先 unprotect）。
+
+### 方式一：CLI（可 cron / 可 docker exec，数据丢失防护的主载体）
+
+```bash
+# 备份（默认写到 <data-dir>/backups/<ns>_<时间戳>.json.gz，在持久卷内、宿主可见）
+python backup_cli.py backup --namespace myproject
+# 指定输出路径
+python backup_cli.py backup --namespace myproject --out /backups/myproject.json.gz
+
+# 恢复（默认恢复到备份里的 namespace；--target 恢复到别的 namespace = 复制/迁移）
+python backup_cli.py restore --in <data-dir>/backups/myproject_20260622-103000.json.gz
+python backup_cli.py restore --in /backups/myproject.json.gz --target myproject_copy
+
+# Docker 里（容器名按实际）：
+docker exec agent-memory-backend python backup_cli.py backup --namespace shipbearERP-master
+# 文件会落在宿主 ./Agent-Memory-Server/data/backups/
+```
+
+**定时自动备份**（Linux cron，每天 3:17 备份关键 namespace）：
+```cron
+17 3 * * *  docker exec agent-memory-backend python backup_cli.py backup --namespace shipbearERP-master >> /var/log/ambk.log 2>&1
+```
+
+### 方式二：REST（前端集成用）
+
+```bash
+# 下载备份文件
+curl -o myproject.json.gz "http://localhost:8900/api/backup?namespace=myproject"
+
+# 上传恢复（后台任务，返回 task_id；轮询进度见「代码库同步」的轮询方式）
+curl -X POST "http://localhost:8900/api/restore?target_namespace=myproject" \
+     -F "file=@myproject.json.gz"
+# => {"task_id": "...", "namespace": "myproject", "message": "恢复任务已创建（将清空目标 namespace 后导入）"}
+
+# 轮询：GET /api/tasks/{task_id}  （stage: clear → sqlite → chroma → graph → sessions → complete）
+```
+
+### 方式三：MCP（在 AI 终端直接操作）
+
+```
+backup_namespace(namespace="myproject")                      # → 返回文件路径与统计
+restore_namespace(file_path="<data-dir>/backups/myproject_<ts>.json.gz", target_namespace="myproject")
+```
+
+> ⚠️ MCP 的 `restore_namespace` 对超大 namespace 可能超 MCP 工具调用超时，**超大库请用方式二的 REST 后台任务**（异步、有进度）。备份是只读、秒级，MCP 直接用即可。
 
 ## 设计要点与常见问题
 
@@ -438,6 +505,7 @@ project_overview()
 | **同步前先清空** | 重新提取同一 namespace 必须先 `clear`，否则节点翻倍（见上文 Sync 章节）。 |
 | **修改 MCP 工具后需重启** | 改了 `server.py` 后，在 Claude Code 执行 `/mcp` 重启 `agent-memory`（或重进），新工具/新路径才在其他终端生效。 |
 | **保护命名空间** | 设为只读的 namespace 拒绝写入/删除/清空；同步前确保目标 namespace 未被保护。 |
+| **恢复会先清空目标** | `restore` 采用 REPLACE 语义：导入前先清空目标 namespace 的**全部**数据（含 sessions/工作记忆/清单，比 `clear` 更全）。恢复到受保护 namespace 被拒绝。**先备份再恢复**。备份文件默认落 `<data-dir>/backups/`（持久卷内），建议配 cron 定期备份以防数据丢失。 |
 
 ## 检索算法
 
@@ -474,7 +542,9 @@ Agent-Memory/
 │   ├── requirements.txt         # Python 依赖
 │   └── data/                    # 运行时数据目录（容器内 bind mount 持久化）
 │       ├── chroma_db/           # 向量数据库
-│       └── memory_metadata.db   # SQLite 元数据
+│       ├── agent_memory.db      # SQLite 元数据 (FTS5 + 图谱 + 清单 + sessions)
+│       ├── chroma_db/           # ChromaDB 向量
+│       └── backups/             # namespace 备份 (.json.gz，备份/恢复功能产物)
 ├── Agent-Memory-Graphify/       # Graphify 源码（AST 提取引擎，构建时打包进后端镜像）
 └── Agent-memory-ui/             # Next.js 前端
     ├── Dockerfile               # 前端镜像（standalone 多阶段构建）
@@ -523,4 +593,4 @@ Agent-Memory/
 | 知识图谱 (Knowledge Graph) | 基于 Graphify 的 AST 提取，支持节点/边的 CRUD、最短路径、邻居查询、批量导入 | 已完成 |
 | 命名空间保护 (Namespace Protection) | 将指定命名空间设为只读，禁止写入/删除操作 | 已完成 |
 | 多用户隔离 (Multi-tenant) | 不同用户/Agent 的记忆完全隔离，支持权限控制 | 待开发 |
-| 备份与恢复 (Backup / Restore) | 导出/导入整个 namespace 的记忆数据 | 待开发 |
+| 备份与恢复 (Backup / Restore) | 导出/导入整个 namespace 的记忆数据（含 ChromaDB 向量，恢复不重新向量化；REST / MCP / CLI 三入口） | 已完成 |
