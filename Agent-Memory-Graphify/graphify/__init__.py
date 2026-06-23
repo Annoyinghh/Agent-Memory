@@ -1,24 +1,18 @@
-"""graphify - extract · build · cluster · analyze · report."""
+"""graphify - AST extraction core (trimmed for Agent-Memory).
+
+Only the extraction closure is kept: extract, cache, mcp_ingest, security,
+detect, google_workspace. The build/cluster/analyze/report/export/wiki modules
+and the skill .md assets were removed; graphify is used here purely as a
+library (graphify_bridge.py: `from graphify.extract import extract, collect_files`).
+"""
 
 
 def __getattr__(name):
-    # Lazy imports so `graphify install` works before heavy deps are in place.
+    # Lazy attribute access on the package. Only the extraction entry points
+    # remain after trimming.
     _map = {
         "extract": ("graphify.extract", "extract"),
         "collect_files": ("graphify.extract", "collect_files"),
-        "build_from_json": ("graphify.build", "build_from_json"),
-        "cluster": ("graphify.cluster", "cluster"),
-        "score_all": ("graphify.cluster", "score_all"),
-        "cohesion_score": ("graphify.cluster", "cohesion_score"),
-        "god_nodes": ("graphify.analyze", "god_nodes"),
-        "surprising_connections": ("graphify.analyze", "surprising_connections"),
-        "suggest_questions": ("graphify.analyze", "suggest_questions"),
-        "generate": ("graphify.report", "generate"),
-        "to_json": ("graphify.export", "to_json"),
-        "to_html": ("graphify.export", "to_html"),
-        "to_svg": ("graphify.export", "to_svg"),
-        "to_canvas": ("graphify.export", "to_canvas"),
-        "to_wiki": ("graphify.wiki", "to_wiki"),
     }
     if name in _map:
         import importlib
