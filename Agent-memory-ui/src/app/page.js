@@ -49,6 +49,21 @@ export default function SPAHomepage() {
   const [packLoading, setPackLoading] = useState(false);
   const [packError, setPackError] = useState(null);
   const [copySuccess, setCopySuccess] = useState(false);
+  const [packCompress, setPackCompress] = useState(false);
+  const [packResStats, setPackResStats] = useState(null);
+
+  // Compression Tool states
+  const [compressTextInput, setCompressTextInput] = useState('');
+  const [compressLanguage, setCompressLanguage] = useState('auto');
+  const [compressResult, setCompressResult] = useState(null);
+  const [compressLoading, setCompressLoading] = useState(false);
+  const [compressError, setCompressError] = useState(null);
+  const [compressStatsData, setCompressStatsData] = useState(null);
+
+  const [retrieveKeyInput, setRetrieveKeyInput] = useState('');
+  const [retrieveResult, setRetrieveResult] = useState(null);
+  const [retrieveLoading, setRetrieveLoading] = useState(false);
+  const [retrieveError, setRetrieveError] = useState(null);
 
   // Precise Source Search states
   const [sourceQuery, setSourceQuery] = useState('');
@@ -97,15 +112,20 @@ export default function SPAHomepage() {
     setPackLoading(true);
     setPackError(null);
     setPackedContext('');
+    setPackResStats(null);
     setCopySuccess(false);
 
     try {
-      const res = await api.pack(activeNamespace, packQuery, maxTokens);
+      const res = await api.pack(activeNamespace, packQuery, maxTokens, packCompress);
       setPackedContext(res.packed_context || '');
+      setPackResStats({
+        compressed: !!res.compressed,
+        ratio: res.ratio
+      });
       
       setLastEvent({
         type: 'search',
-        message: `上下文组装就绪！已在命名空间 [ ${activeNamespace === 'all' ? '全部' : activeNamespace} ] 下为“${packQuery}”匹配最优知识，并在预算 ${maxTokens} token 内组装。`
+        message: `上下文组装就绪！已在命名空间 [ ${activeNamespace === 'all' ? '全部' : activeNamespace} ] 下为“${packQuery}”匹配最优知识，并在预算 ${maxTokens} token 内组装${res.compressed ? `，且已启用 Headroom 语义压缩(压缩率: ${(res.ratio * 100).toFixed(1)}%)` : ''}。`
       });
     } catch (err) {
       console.error(err);
@@ -114,6 +134,72 @@ export default function SPAHomepage() {
       setPackLoading(false);
     }
   };
+
+  const handleCompressSubmit = async (e) => {
+    if (e) e.preventDefault();
+    if (!compressTextInput.trim()) return;
+
+    setCompressLoading(true);
+    setCompressError(null);
+    setCompressResult(null);
+    setRetrieveResult(null);
+
+    try {
+      const res = await api.compress(compressTextInput, compressLanguage);
+      setCompressResult(res);
+      if (res.key) {
+        setRetrieveKeyInput(res.key);
+      }
+      setLastEvent({
+        type: 'search',
+        message: `文本可逆压缩完成！方法: ${res.method}，压缩后 Token: ${res.compressed_tokens}/${res.original_tokens} (${(res.ratio * 100).toFixed(1)}%)`
+      });
+    } catch (err) {
+      console.error(err);
+      setCompressError(err.message || '压缩失败，请检查 API 服务器状态');
+    } finally {
+      setCompressLoading(false);
+    }
+  };
+
+  const handleRetrieveSubmit = async (e) => {
+    if (e) e.preventDefault();
+    if (!retrieveKeyInput.trim()) return;
+
+    setRetrieveLoading(true);
+    setRetrieveError(null);
+    setRetrieveResult(null);
+    setCompressResult(null);
+
+    try {
+      const res = await api.retrieveCompressed(retrieveKeyInput.trim());
+      setRetrieveResult(res);
+      setLastEvent({
+        type: 'search',
+        message: `已成功还原 Key [${retrieveKeyInput.trim()}] 的原始文本！`
+      });
+    } catch (err) {
+      console.error(err);
+      setRetrieveError(err.message || '还原失败，无法找到指定 Key 的原文');
+    } finally {
+      setRetrieveLoading(false);
+    }
+  };
+
+  const fetchCompressStats = async () => {
+    try {
+      const stats = await api.getCompressStats();
+      setCompressStatsData(stats);
+    } catch (err) {
+      console.error('获取压缩服务状态失败:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (searchSubMode === 'compress') {
+      fetchCompressStats();
+    }
+  }, [searchSubMode]);
 
   const handleSourceSearchSubmit = async (e) => {
     if (e) e.preventDefault();
@@ -1156,6 +1242,24 @@ export default function SPAHomepage() {
                   </svg>
                   PRECISE_SOURCE_SEARCH // 源码检索
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchSubMode('compress');
+                    setCompressError(null);
+                    setRetrieveError(null);
+                  }}
+                  className={`sub-mode-tab-btn ${searchSubMode === 'compress' ? 'active' : ''}`}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="4" y="14" width="6" height="6" rx="1" stroke="currentColor" fill="none" />
+                    <rect x="14" y="4" width="6" height="6" rx="1" stroke="currentColor" fill="none" />
+                    <rect x="4" y="4" width="6" height="6" rx="1" stroke="currentColor" fill="none" />
+                    <rect x="14" y="14" width="6" height="6" rx="1" stroke="currentColor" fill="none" />
+                  </svg>
+                  COMPRESSION_TOOL // 压缩工具
+                </button>
               </div>
 
               {searchSubMode === 'search' && (
@@ -1401,6 +1505,22 @@ export default function SPAHomepage() {
                         />
                       </div>
 
+                      <div className="form-group-sci" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '10px', marginBottom: '15px' }}>
+                        <span style={{ fontSize: '11px', color: 'hsl(var(--text-muted))', fontWeight: '500' }}>
+                          启用 Headroom 语义压缩 (Compress)
+                        </span>
+                        <div className="cyber-switch-wrapper">
+                          <input
+                            id="pack-compress-switch"
+                            type="checkbox"
+                            checked={packCompress}
+                            onChange={(e) => setPackCompress(e.target.checked)}
+                            className="cyber-checkbox-hidden"
+                          />
+                          <label htmlFor="pack-compress-switch" className="cyber-switch-label"></label>
+                        </div>
+                      </div>
+
                       <button type="submit" className="sci-submit-btn bg-purple" disabled={packLoading}>
                         {packLoading ? '打包中...' : '生成上下文 Prompt'}
                       </button>
@@ -1430,6 +1550,22 @@ export default function SPAHomepage() {
                       </div>
                     ) : (
                       <GlassCard title="生成结果 (Packed Prompt Snippet)" glowColor="purple" className="result-item-card">
+                        {packResStats && packResStats.compressed && (
+                          <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            fontSize: '11px',
+                            color: 'hsl(var(--color-purple))',
+                            borderBottom: '1px solid rgba(255, 102, 0, 0.15)',
+                            paddingBottom: '8px',
+                            marginBottom: '12px',
+                            fontFamily: 'var(--font-mono)'
+                          }}>
+                            <span className="pulse-indicator" style={{ backgroundColor: 'hsl(var(--color-purple))', boxShadow: '0 0 6px hsl(var(--color-purple))', width: '5px', height: '5px' }}></span>
+                            <span>[ HEADROOM_COMPRESSION // 语义压缩激活: 已减少至原体积的 {(packResStats.ratio * 100).toFixed(1)}% ({( (1 - packResStats.ratio) * 100).toFixed(1)}% 空间节省) ]</span>
+                          </div>
+                        )}
                         <div className="result-item-body" style={{ maxHeight: '400px' }}>
                           <pre className="result-code" style={{ whiteSpace: 'pre-wrap' }}>{packedContext}</pre>
                         </div>
@@ -1451,6 +1587,211 @@ export default function SPAHomepage() {
                   </div>
                 </div>
               </div>
+              )}
+
+              {searchSubMode === 'compress' && (
+                <div className="search-tab-layout">
+                  <div className="search-left-form">
+                    <GlassCard title="Headroom 压缩控制台 (Compression Console)" glowColor="purple" className="op-panel-card">
+                      <form onSubmit={handleCompressSubmit} className="sci-form">
+                        <div className="form-group-sci">
+                          <label htmlFor="compress-text-input">待压缩内容 (Raw Input Text)</label>
+                          <textarea
+                            id="compress-text-input"
+                            rows={8}
+                            value={compressTextInput}
+                            onChange={(e) => setCompressTextInput(e.target.value)}
+                            placeholder="在此粘贴长文本、JSON、日志或代码以执行可逆语义压缩..."
+                            className="sci-control-textarea"
+                            required
+                          />
+                        </div>
+
+                        <div className="form-group-sci">
+                          <label htmlFor="compress-lang-select">内容类型提示 (Content Type Hint)</label>
+                          <select
+                            id="compress-lang-select"
+                            value={compressLanguage}
+                            onChange={(e) => setCompressLanguage(e.target.value)}
+                            className="sci-control-select"
+                          >
+                            <option value="auto">自动识别 (Auto Detect)</option>
+                            <option value="json">JSON 结构数据 (Structured JSON)</option>
+                            <option value="logs">运行/系统日志 (Logs)</option>
+                            <option value="code">代码/脚本 (Code / Script)</option>
+                            <option value="text">普通文本/散文 (Plain Text / Prose)</option>
+                          </select>
+                        </div>
+
+                        <button type="submit" className="sci-submit-btn bg-purple" disabled={compressLoading}>
+                          {compressLoading ? '压缩中...' : '执行 Headroom 压缩'}
+                        </button>
+                      </form>
+
+                      <div style={{ margin: '20px 0', borderBottom: '1px dashed rgba(255, 102, 0, 0.15)' }}></div>
+
+                      <form onSubmit={handleRetrieveSubmit} className="sci-form">
+                        <div className="form-group-sci">
+                          <label htmlFor="retrieve-key-input">还原存储 Key (CCR Cache Key)</label>
+                          <input
+                            id="retrieve-key-input"
+                            type="text"
+                            value={retrieveKeyInput}
+                            onChange={(e) => setRetrieveKeyInput(e.target.value)}
+                            placeholder="输入以 hr- 开头的缓存 Key..."
+                            className="sci-control-input"
+                            required
+                          />
+                        </div>
+
+                        <button type="submit" className="sci-submit-btn bg-cyan" disabled={retrieveLoading}>
+                          {retrieveLoading ? '提取中...' : '取回原始文本'}
+                        </button>
+                      </form>
+                    </GlassCard>
+                  </div>
+
+                  <div className="search-right-results">
+                    <div className="search-results-wrapper font-mono">
+                      {compressLoading ? (
+                        <div className="search-status-banner">[ COMPRESSING // Headroom 正在进行可逆压缩计算... ]</div>
+                      ) : retrieveLoading ? (
+                        <div className="search-status-banner">[ RETRIEVING // 正在从共享卷 CCR 目录中检索并提取原文... ]</div>
+                      ) : compressError ? (
+                        <div className="search-error-banner" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'hsl(var(--color-red))' }}>
+                            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01" />
+                          </svg>
+                          <span>压缩失败: {compressError}</span>
+                        </div>
+                      ) : retrieveError ? (
+                        <div className="search-error-banner" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'hsl(var(--color-red))' }}>
+                            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01" />
+                          </svg>
+                          <span>取回失败: {retrieveError}</span>
+                        </div>
+                      ) : compressResult ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                          <GlassCard title="压缩率与元数据 (Metrics)" glowColor="purple" className="result-item-card">
+                            <div className="sci-form font-mono" style={{ fontSize: '11px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.04)', paddingBottom: '4px' }}>
+                                <span style={{ color: 'hsl(var(--text-muted))' }}>方法/路由通道:</span>
+                                <span style={{ color: 'hsl(var(--color-purple))', fontWeight: 'bold' }}>{compressResult.method}</span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.04)', paddingBottom: '4px' }}>
+                                <span style={{ color: 'hsl(var(--text-muted))' }}>原始 Token 估算:</span>
+                                <span>{compressResult.original_tokens} tokens</span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.04)', paddingBottom: '4px' }}>
+                                <span style={{ color: 'hsl(var(--text-muted))' }}>压缩后 Token:</span>
+                                <span>{compressResult.compressed_tokens} tokens</span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.04)', paddingBottom: '4px' }}>
+                                <span style={{ color: 'hsl(var(--text-muted))' }}>压缩率/空间占比:</span>
+                                <span style={{ color: compressResult.ratio < 1 ? 'hsl(var(--color-green))' : 'inherit' }}>
+                                  {(compressResult.ratio * 100).toFixed(1)}% {compressResult.ratio < 1 ? `(减少了 ${((1 - compressResult.ratio) * 100).toFixed(1)}%)` : ''}
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '4px' }}>
+                                <span style={{ color: 'hsl(var(--text-muted))' }}>取回 Key:</span>
+                                {compressResult.key ? (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span style={{ color: 'hsl(var(--color-cyan))', fontWeight: 'bold' }}>{compressResult.key}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(compressResult.key);
+                                        alert('Key 已复制');
+                                      }}
+                                      style={{ background: 'transparent', border: '1px solid rgba(0, 242, 254, 0.3)', color: 'hsl(var(--color-cyan))', padding: '2px 6px', borderRadius: '3px', fontSize: '9px', cursor: 'pointer' }}
+                                    >
+                                      复制 Key
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span style={{ color: 'hsl(var(--text-muted))' }}>无 (未发生实际压缩，无需还原)</span>
+                                )}
+                              </div>
+                            </div>
+                          </GlassCard>
+
+                          <GlassCard title="压缩后文本 (Compressed Text Output)" glowColor="purple" className="result-item-card">
+                            <div className="result-item-body" style={{ maxHeight: '250px' }}>
+                              <pre className="result-code" style={{ whiteSpace: 'pre-wrap' }}>{compressResult.compressed}</pre>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
+                              <button
+                                type="button"
+                                className="copy-prompt-btn"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(compressResult.compressed);
+                                  alert('已复制压缩后文本');
+                                }}
+                              >
+                                复制结果
+                              </button>
+                            </div>
+                          </GlassCard>
+                        </div>
+                      ) : retrieveResult ? (
+                        <GlassCard title={`已还原的原文 (CCR Key: ${retrieveResult.key})`} glowColor="cyan" className="result-item-card">
+                          <div className="result-item-body" style={{ maxHeight: '400px' }}>
+                            <pre className="result-code" style={{ whiteSpace: 'pre-wrap' }}>{retrieveResult.original}</pre>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
+                            <button
+                                type="button"
+                                className="copy-prompt-btn"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(retrieveResult.original);
+                                  alert('已复制原文');
+                                }}
+                              >
+                                复制原文
+                              </button>
+                          </div>
+                        </GlassCard>
+                      ) : (
+                        <GlassCard title="压缩引擎遥测 (Telemetry stats)" glowColor="purple" className="result-item-card">
+                          <div className="sci-form font-mono" style={{ fontSize: '11px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.04)', paddingBottom: '6px' }}>
+                              <span style={{ color: 'hsl(var(--text-muted))' }}>服务状态 (Status):</span>
+                              <span style={{
+                                color: compressStatsData?.available ? 'hsl(var(--color-green))' : 'hsl(var(--color-red))',
+                                fontWeight: 'bold'
+                              }}>
+                                {compressStatsData ? (compressStatsData.available ? '● AVAILABLE // 已激活' : '○ UNAVAILABLE // 未就绪') : '加载中...'}
+                              </span>
+                            </div>
+                            {compressStatsData && (
+                              <>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.04)', paddingBottom: '6px' }}>
+                                  <span style={{ color: 'hsl(var(--text-muted))' }}>共享 CCR 卷目录:</span>
+                                  <span style={{ fontSize: '10px' }}>{compressStatsData.ccr_dir}</span>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.04)', paddingBottom: '6px' }}>
+                                  <span style={{ color: 'hsl(var(--text-muted))' }}>压缩起步阈值:</span>
+                                  <span>{compressStatsData.min_tokens} tokens</span>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.04)', paddingBottom: '6px' }}>
+                                  <span style={{ color: 'hsl(var(--text-muted))' }}>环境变量 (HEADROOM_ENABLED):</span>
+                                  <span>{compressStatsData.enabled_env}</span>
+                                </div>
+                                {compressStatsData.error && (
+                                  <div style={{ marginTop: '8px', color: 'hsl(var(--color-red))', fontSize: '10px', whiteSpace: 'pre-wrap', border: '1px dashed rgba(244, 63, 94, 0.2)', padding: '8px', borderRadius: '4px', background: 'rgba(244, 63, 94, 0.02)' }}>
+                                    <span style={{ fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>诊断错误信息:</span>
+                                    {compressStatsData.error}
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </GlassCard>
+                      )}
+                    </div>
+                  </div>
+                </div>
               )}
 
               {searchSubMode === 'source' && (
@@ -4250,6 +4591,58 @@ export default function SPAHomepage() {
 
         .manual-section ul li strong {
           color: hsl(var(--text-primary));
+        }
+
+        /* Cyber Switch (Checkbox) */
+        .cyber-switch-wrapper {
+          position: relative;
+          display: inline-block;
+          width: 44px;
+          height: 22px;
+          vertical-align: middle;
+        }
+
+        .cyber-checkbox-hidden {
+          opacity: 0;
+          width: 0;
+          height: 0;
+          position: absolute;
+        }
+
+        .cyber-switch-label {
+          position: absolute;
+          cursor: pointer;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background-color: rgba(3, 5, 10, 0.7);
+          border: 1px solid rgba(255, 187, 0, 0.15);
+          transition: .3s;
+          border-radius: 22px;
+        }
+
+        .cyber-switch-label:before {
+          position: absolute;
+          content: "";
+          height: 14px;
+          width: 14px;
+          left: 3px;
+          bottom: 3px;
+          background-color: hsl(var(--text-muted));
+          transition: .3s;
+          border-radius: 50%;
+        }
+
+        .cyber-checkbox-hidden:checked + .cyber-switch-label {
+          background-color: rgba(255, 102, 0, 0.15);
+          border-color: hsl(var(--color-purple));
+        }
+
+        .cyber-checkbox-hidden:checked + .cyber-switch-label:before {
+          transform: translateX(22px);
+          background-color: hsl(var(--color-purple));
+          box-shadow: 0 0 8px hsl(var(--color-purple));
         }
       `}</style>
     </div>

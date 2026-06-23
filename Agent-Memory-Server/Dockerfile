@@ -62,7 +62,7 @@ RUN set +e; \
 RUN set +e; \
     mkdir -p /app/data/headroom-ccr; \
     for i in $(seq 1 8); do \
-      python -c "from headroom import compress, CompressConfig; cfg=CompressConfig(compress_user_messages=True, protect_analysis_context=False, protect_recent=0, min_tokens_to_compress=50); r=compress([{'role':'user','content':'[{\"id\":'+str(i)+'},' * 300 + ']' }], config=cfg); print('HEADROOM_WARMUP before=%d after=%d ratio=%.2f' % (r.tokens_before, r.tokens_after, r.compression_ratio))" \
+      python -c "from headroom import compress, CompressConfig; cfg=CompressConfig(compress_user_messages=True, protect_analysis_context=False, protect_recent=0, min_tokens_to_compress=50); r=compress([{'role':'user','content':'[{\"id\":'+str(1)+'},' * 300 + ']' }], config=cfg); print('HEADROOM_WARMUP before=%d after=%d ratio=%.2f' % (r.tokens_before, r.tokens_after, r.compression_ratio))" \
         && { echo "HEADROOM_WARMUP_OK"; break; }; \
       echo ">>> headroom warmup attempt $i failed, retrying in 12s"; sleep 12; \
     done; \

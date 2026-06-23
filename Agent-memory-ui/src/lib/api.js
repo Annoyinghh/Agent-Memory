@@ -166,12 +166,44 @@ export const api = {
    * @param {string} namespace
    * @param {string} query
    * @param {number} maxTokens
-   * @returns {Promise<{query: string, namespace: string, packed_context: string}>}
+   * @param {boolean} compress
+   * @returns {Promise<{query: string, namespace: string, packed_context: string, compressed?: boolean, ratio?: number}>}
    */
-  pack: (namespace, query, maxTokens = 2000) =>
+  pack: (namespace, query, maxTokens = 2000, compress = false) =>
     request('/api/memory/pack', {
       method: 'POST',
-      body: JSON.stringify({ namespace, query, max_tokens: maxTokens }),
+      body: JSON.stringify({ namespace, query, max_tokens: maxTokens, compress }),
+    }),
+
+  /**
+   * Compress arbitrary text using headroom
+   * @param {string} text
+   * @param {string|null} language
+   * @returns {Promise<{compressed: string, key?: string, original_tokens: number, compressed_tokens: number, ratio: number, method: string}>}
+   */
+  compress: (text, language = null) =>
+    request('/api/compress', {
+      method: 'POST',
+      body: JSON.stringify({ text, language: language === 'none' || language === 'auto' ? null : language }),
+    }),
+
+  /**
+   * Retrieve original text using a CCR key
+   * @param {string} key
+   * @returns {Promise<{key: string, original: string}>}
+   */
+  retrieveCompressed: (key) =>
+    request(`/api/compress/retrieve?key=${encodeURIComponent(key)}`, {
+      method: 'GET',
+    }),
+
+  /**
+   * Get headroom compression status and stats
+   * @returns {Promise<{available: boolean, ccr_dir: string, min_tokens: number, enabled_env: string, error?: string}>}
+   */
+  getCompressStats: () =>
+    request('/api/compress/stats', {
+      method: 'GET',
     }),
 
   /**
