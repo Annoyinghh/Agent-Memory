@@ -97,6 +97,7 @@ export default function KnowledgeGraph() {
   const isDraggingRef = useRef(false);
   const dragModeRef = useRef('rotate'); // 'rotate' or 'pan'
   const previousMousePositionRef = useRef({ x: 0, y: 0 });
+  const isCameraLerpingRef = useRef(false);
 
   // Reset Camera View
   const handleResetCamera = () => {
@@ -140,11 +141,14 @@ export default function KnowledgeGraph() {
       controlsRef.current.enableDamping = true;
     }
     if (cameraRef.current) {
-      cameraRef.current.position.set(0, dist * 0.5, dist);
+      cameraRef.current.position.set(0, distance * 0.5, distance);
     }
     targetLookAtRef.current.set(0, 0, 0);
-    if (!targetCamPosRef.current) targetCamPosRef.current = new THREE.Vector3();
-    targetCamPosRef.current.set(0, dist * 0.5, dist);
+    if (!targetCamPosRef.current) {
+      targetCamPosRef.current = new THREE.Vector3();
+    }
+    targetCamPosRef.current.set(0, 0, distance);
+    isCameraLerpingRef.current = true;
   };
 
   // Fetch Graph Data
@@ -526,6 +530,13 @@ export default function KnowledgeGraph() {
     controls.dampingFactor = 0.05;
     controls.minDistance = 2;
     controls.maxDistance = 50000;
+    
+    // Stop programmatic camera lerping if the user interacts manually
+    controls.addEventListener('start', () => {
+      isCameraLerpingRef.current = false;
+      targetCamPosRef.current = null;
+    });
+
     controlsRef.current = controls;
 
     try {
@@ -712,6 +723,7 @@ export default function KnowledgeGraph() {
           if (cameraRef.current && controlsRef.current) {
             const offset = cameraRef.current.position.clone().sub(controlsRef.current.target).normalize().multiplyScalar(12.0);
             targetCamPosRef.current.copy(clickedMesh.position).add(offset);
+            isCameraLerpingRef.current = true;
           }
         } else {
           setSelectedNode(null);
@@ -1180,10 +1192,12 @@ export default function KnowledgeGraph() {
         controlsRef.current.target.lerp(targetLookAtRef.current, 0.1);
         
         // If we recently selected a node or reset, smoothly move camera to targetCamPosRef
-        if (targetCamPosRef.current && camera.position.distanceTo(targetCamPosRef.current) > 0.1) {
-           camera.position.lerp(targetCamPosRef.current, 0.05);
-        } else {
-           targetCamPosRef.current.copy(camera.position);
+        if (isCameraLerpingRef.current && targetCamPosRef.current) {
+           if (camera.position.distanceTo(targetCamPosRef.current) > 0.1) {
+             camera.position.lerp(targetCamPosRef.current, 0.05);
+           } else {
+             isCameraLerpingRef.current = false;
+           }
         }
         
         controlsRef.current.update();
