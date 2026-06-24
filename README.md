@@ -89,6 +89,27 @@ docker compose down             # 停止并移除容器（数据卷保留在宿�
 - Dashboard UI：http://localhost:3000（局域网用 `http://<本机IP>:3000`）
 - REST API 文档：http://localhost:8900/docs
 
+### 运维一行命令（`ops.sh`）
+
+仓库根的 `ops.sh` 把常见的 docker / curl 仪式压成一条命令（Windows Git Bash 可用；依赖 `docker`、`curl`、`python`）：
+
+```bash
+./ops.sh health              # 后端 /health + 容器状态
+./ops.sh logs backend 200    # 看日志（服务 [行数]，默认 backend 120）
+./ops.sh restart backend     # 重启服务并等健康
+./ops.sh ns                  # 列出 namespaces
+./ops.sh graph:stats [ns]    # 图谱统计（不传 ns 看全局）
+./ops.sh graph:rebuild myprj # 全量重建图谱（target=/workspace, rebuild=true）
+./ops.sh graph:clear  myprj  # 清空该 namespace 整张图谱 [危险·需确认]
+./ops.sh task <id>           # 查异步任务进度
+./ops.sh compress:stats      # headroom 压缩器状态
+./ops.sh compress:test "..." # 试压一段文本
+./ops.sh mcp:config          # 查看 agent-memory MCP 启动参数
+./ops.sh mcp:fix             # 幂等补 MCP 仓库挂载（见下节，被 CC 覆盖就重跑）
+```
+
+> `graph:*` 走 REST 8900（后端已挂 `/workspace`，能直接看到代码库）。改后端地址用 `AGENT_MEMORY_API=...`。`./ops.sh help` 看全部命令。
+
 ### 架构要点
 
 - **单一数据所有者**：只有 `backend` 容器写 `data/` 卷，根除历史上跨进程 ChromaDB 句柄失效（`Error finding id`）问题。
@@ -121,13 +142,22 @@ HEADROOM_CCR_DIR=/app/data/headroom-ccr  # 压缩原文缓存目录（持久卷�
   "args": [
     "run", "-i", "--rm",
     "-v", "E:/Agent-Memory/Agent-Memory-Server/data:/app/data",
+    "-v", "E:/shipbearERP-master:/workspace:ro",
+    "-v", "E:/Agent-Memory/.mcp-graphify-cache:/app/.graphify-cache",
     "-e", "PYTHONIOENCODING=utf-8",
+    "-e", "GRAPHIFY_CACHE_DIR=/app/.graphify-cache",
+    "-e", "HEADROOM_TELEMETRY=off",
+    "-e", "HEADROOM_CCR_DIR=/app/data/headroom-ccr",
     "agent-memory-server", "python", "server.py"
   ]
 }
 ```
 
 > 卷路径按你的实际仓库位置改（Windows 用正斜杠 `/` 或 `E:/...`）。Codex / Gemini CLI 用各自等价的 MCP 注册命令，镜像与卷参数相同。
+
+**为什么要多挂一个 `/workspace:ro`**：默认只挂数据卷的话，MCP 容器看不到代码库——`sync_codebase` / `precise_source_search` 这类工具会静默失败，只能绕去 REST。挂上代码仓库（只读）+ 可写的 graphify 缓存目录后，MCP 端就能直接建图/查源码，与 `backend` 行为一致；headroom env 让 MCP 端压缩与 REST 端共用同一个 CCR 卷（可逆取回互通）。
+
+> **一键打这个补丁**：`./ops.sh mcp:fix`（幂等——已 patched 会跳过；Claude Code 退出时偶尔用内存旧版覆盖 `~/.claude.json`，被覆盖了重跑一次即可）。改完**重启 Claude Code** 才会让新挂载在下次 MCP 启动时生效。
 
 ### 在其他设备 / 服务器上部署
 
@@ -324,6 +354,8 @@ python ingest.py --dir ./your-docs --namespace myproject --ext .md,.txt,.py
 
 Agent-Memory 负责**选对**记忆（pack_context/hybrid_search）；集成的 [headroom](https://github.com/headroomlabs-ai/headroom) 负责**压小**记忆内容——两者叠加：同 token 预算塞进更多条记忆，且**可逆**（LLM 随时按 key 取回原文）。
 
+> ✅ **当前 `agent-memory-server` 镜像已内置 headroom 0.27.0**——`GET /api/compress/stats` 返回 `{"available": true, ...}`，开箱即用。下方「可选依赖/优雅降级」仅指受限网络下构建装不上 headroom 时的兜底。实测：JSON ≈ 省 60%（ratio 0.39）、日志 ≈ 省 95%；取回端点 `GET /api/compress/retrieve?key=` 返回 `{"key","original"}`。
+
 ### 工作方式
 - headroom 按内容类型自动路由（headroom 0.27 实测）：**JSON/结构化 → SmartCrusher（约省 60%）、日志 → LogCompressor（约省 95%）效果显著**；代码/散文常被路由判为 no-op 直接原样返回（headroom 默认对 user 消息保守，本集成已开 `compress_user_messages=True` 尽力压缩，但仍非所有内容都能压）。**压不了的就诚实 passthrough**，不损坏内容。
 - `compress=true` 时，`pack_context` 把每条记忆内容压缩后再打包，块更小→同预算纳入更多条；每块带 `retrieve="<key>"`，LLM 调 `headroom_retrieve(key)` 取回完整原文。
@@ -476,6 +508,8 @@ project_overview()
 ```
 
 > ⚠️ MCP 的 `sync_codebase` 是**同步阻塞**调用，会重新 AST 解析 + 向量化整棵树，超大库可能超过 MCP 工具调用超时。**超大库请改用方式一的 REST 后台任务**（异步、有进度、不超时）。MCP 工具内部已把提取进度输出重定向到 stderr，不会破坏 stdio 的 JSON-RPC 协议。
+
+> **前提：MCP 容器必须挂载代码仓库**（见上「MCP Server 也跑在容器里」或 `./ops.sh mcp:fix`）。否则 MCP 端 `sync_codebase` 看不到目标路径会失败——这种情况下直接用方式一 REST（`backend` 已挂 `/workspace`，或把 `target_dir` 指向宿主路径）。
 
 ### 同步还是慢？
 

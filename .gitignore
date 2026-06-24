@@ -9,6 +9,7 @@ __pycache__/
 data/
 Agent-Memory-Server/data/
 Agent-Memory-Server/graphify-out/
+.mcp-graphify-cache/
 
 # Node
 Agent-memory-ui/node_modules/
