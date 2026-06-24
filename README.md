@@ -159,6 +159,32 @@ HEADROOM_CCR_DIR=/app/data/headroom-ccr  # 压缩原文缓存目录（持久卷�
 
 > **一键打这个补丁**：`./ops.sh mcp:fix`（幂等——已 patched 会跳过；Claude Code 退出时偶尔用内存旧版覆盖 `~/.claude.json`，被覆盖了重跑一次即可）。改完**重启 Claude Code** 才会让新挂载在下次 MCP 启动时生效。
 
+### 局域网 / 远程：MCP-over-HTTP（streamable-http）
+
+本机的 `docker run ... server.py`（stdio）只能本机用——CLI 和容器在同一台机器，**跨机器物理上连不上 stdio**。为此另起一个长驻 `mcp` 服务，把同一套 MCP 工具用 **streamable-http** 暴露到端口，供局域网/远程机器接入：
+
+```bash
+docker compose up -d mcp      # 起 MCP-over-HTTP 服务（端口 8901）
+docker compose logs mcp       # 看到 "Uvicorn running on http://0.0.0.0:8901" 即成功
+```
+
+远端机器（同一局域网）一行接入，工具/体验与本机一致：
+
+```bash
+claude mcp add --transport http agent-memory http://<服务器IP>:8901/mcp
+# 例（本机 WLAN IP）：
+claude mcp add --transport http agent-memory http://192.168.110.109:8901/mcp
+```
+
+> Codex / Gemini CLI 用各自等价的 HTTP 传输注册（如 `codex mcp add --transport http ... <url>` / `gemini mcp add ... <url>`）。
+
+要点：
+- **本机 per-call stdio MCP 与这个长驻 HTTP MCP 共存**，不冲突；两者读写同一份 `/app/data`（**已实测**：MCP 容器写入、REST 容器立即可见，并发正常，无 ChromaDB 句柄失效）。
+- **端口**：MCP `8901`（后端 REST `8900`、前端 `3000`）。改端口：compose 里 `mcp` 服务的 `MCP_PORT` + `ports` + server.py 的 `MCP_PORT` env。
+- compose 里 `mcp` 服务 bind-mount 了本地 `server.py`，**开发期改 server.py 无需重建镜像**；正式部署重建镜像后可删该卷。
+
+> ⚠️ **安全（务必读）**：`MCP_HOST=0.0.0.0` 把 MCP 裸暴露到局域网、**默认无鉴权**——同网段任何人都能读写你的记忆库。**只在可信内网用**；不可信网络请加 FastMCP 的 `auth`/`transport_security` 或前置带鉴权的反代。`PROTECTED_NAMESPACES` 仅防误清，不防恶意读写。
+
 ### 在其他设备 / 服务器上部署
 
 已容器化，**新机器无需装 conda / Node**，只要有 Docker 即可。
@@ -355,6 +381,28 @@ python ingest.py --dir ./your-docs --namespace myproject --ext .md,.txt,.py
 Agent-Memory 负责**选对**记忆（pack_context/hybrid_search）；集成的 [headroom](https://github.com/headroomlabs-ai/headroom) 负责**压小**记忆内容——两者叠加：同 token 预算塞进更多条记忆，且**可逆**（LLM 随时按 key 取回原文）。
 
 > ✅ **当前 `agent-memory-server` 镜像已内置 headroom 0.27.0**——`GET /api/compress/stats` 返回 `{"available": true, ...}`，开箱即用。下方「可选依赖/优雅降级」仅指受限网络下构建装不上 headroom 时的兜底。实测：JSON ≈ 省 60%（ratio 0.39）、日志 ≈ 省 95%；取回端点 `GET /api/compress/retrieve?key=` 返回 `{"key","original"}`。
+
+### 肉眼可见：压缩前后对比（实测）
+
+拿一段真实 JSON（60 条事件日志）走 `POST /api/compress`，token 账本一目了然：
+
+| | 内容 | token |
+|---|---|---|
+| 压缩前 | 完整 JSON（每条事件一坨重复结构） | **1764** |
+| 压缩后 | SmartCrusher 抽成「表头 + CSV 行」 | **798** |
+| | **省 966 token（≈ 55%），原文可一键取回** | |
+
+落到记忆注入（`pack_context`，token 预算固定）上，效果更直观：
+
+```
+预算 2000 token:
+  压缩关  → 装得下 ~5 条记忆
+  压缩开  → 同样 5 条只占 ~800 token，还能再塞几条
+            每条带 retrieve="hr-xxxx"
+  要某条原文 → headroom_retrieve("hr-xxxx") 立刻取回（0 损失，可逆）
+```
+
+> 各类型实测收益：**JSON/结构化 ≈ 省 55–60%、日志 ≈ 省 95%**；代码/散文常被路由判 no-op → 原样返回（不损坏内容）。低于 50 token 的小块直接跳过（不值当）。随时自查：`./ops.sh compress:test "你的文本"` 或 `./ops.sh compress:stats`。
 
 ### 工作方式
 - headroom 按内容类型自动路由（headroom 0.27 实测）：**JSON/结构化 → SmartCrusher（约省 60%）、日志 → LogCompressor（约省 95%）效果显著**；代码/散文常被路由判为 no-op 直接原样返回（headroom 默认对 user 消息保守，本集成已开 `compress_user_messages=True` 尽力压缩，但仍非所有内容都能压）。**压不了的就诚实 passthrough**，不损坏内容。

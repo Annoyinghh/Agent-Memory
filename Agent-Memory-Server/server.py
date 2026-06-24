@@ -1,5 +1,6 @@
 import uuid
 import sys
+import os
 import io
 import json
 
@@ -20,8 +21,15 @@ except Exception:  # pragma: no cover - optional module
     _ccr_retrieve = None
     _ccr_stats = None
 
-# Initialize the FastMCP server
-mcp = FastMCP("AgentMemoryServer")
+# Initialize the FastMCP server. host/port only matter for network transports
+# (sse / streamable-http); the default stdio transport (per-call local MCP)
+# ignores them, so existing `docker run ... server.py` behavior is unchanged.
+# Override via env: MCP_TRANSPORT (stdio|sse|streamable-http), MCP_HOST, MCP_PORT.
+mcp = FastMCP(
+    "AgentMemoryServer",
+    host=os.environ.get("MCP_HOST", "127.0.0.1"),
+    port=int(os.environ.get("MCP_PORT", "8000")),
+)
 
 # Initialize the memory engine
 engine = MemoryEngine(db_dir="./data")
@@ -617,5 +625,6 @@ def restore_namespace(file_path: str, target_namespace: str = "") -> str:
 
 
 if __name__ == "__main__":
-    print("Agent Memory MCP Server starting up...", file=sys.stderr)
-    mcp.run()
+    transport = os.environ.get("MCP_TRANSPORT", "stdio")
+    print(f"Agent Memory MCP Server starting up (transport={transport})...", file=sys.stderr)
+    mcp.run(transport=transport)

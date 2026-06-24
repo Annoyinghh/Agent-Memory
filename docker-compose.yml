@@ -52,6 +52,38 @@ services:
       retries: 5
       start_period: 20s
 
+  mcp:
+    # 长驻 MCP-over-HTTP 服务（局域网远程接入）。本机 per-call stdio MCP 仍由各 CLI
+    # 自己 `docker run`（见 ~/.claude.json），两者共存、不冲突。
+    # 走 streamable-http，默认无鉴权 —— 仅在可信内网使用（见 README「安全」一节）。
+    image: agent-memory-server
+    container_name: agent-memory-mcp
+    command: ["python", "server.py"]
+    ports:
+      - "8901:8901"                    # 远端 CLI 接入点：http://<本机IP>:8901/mcp
+    environment:
+      MCP_TRANSPORT: streamable-http
+      MCP_HOST: 0.0.0.0                # 必须 0.0.0.0；127.0.0.1 则局域网连不上
+      MCP_PORT: "8901"
+      PYTHONIOENCODING: utf-8
+      PROTECTED_NAMESPACES: ${PROTECTED_NAMESPACES:-test}
+      GRAPHIFY_CACHE_DIR: /app/.graphify-cache
+      HEADROOM_TELEMETRY: off
+      HEADROOM_CCR_DIR: /app/data/headroom-ccr
+      HEADROOM_ENABLED: ${HEADROOM_ENABLED:-1}
+    volumes:
+      # 与 backend 共享同一库（已实测：MCP 容器写、REST 容器立即读到，并发正常）。
+      - ./Agent-Memory-Server/data:/app/data
+      - graphify-cache:/app/.graphify-cache
+      # 代码库（只读），供 sync_codebase / precise_source_search。
+      - E:/shipbearERP-master:/workspace:ro
+      # 开发期：让本服务直接用本地 server.py（免为这点改动重建镜像）。重建镜像后可删此行。
+      - ./Agent-Memory-Server/server.py:/app/server.py:ro
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+
   frontend:
     image: agent-memory-ui
     build:
