@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { useApp } from '@/context/AppContext';
 import { api } from '@/lib/api';
 import GlassCard from './GlassCard';
@@ -29,8 +30,7 @@ export default function KnowledgeGraph() {
   const [searchQuery, setSearchQuery] = useState('');
   const [relationFilter, setRelationFilter] = useState('all');
   
-  // Layout and Animation Controls
-  const [layoutMode, setLayoutMode] = useState('galaxy'); // 'galaxy' (spiral) or 'solar' (concentric orbits)
+  const layoutMode = 'galaxy';
   const [autoRotate, setAutoRotate] = useState(true);
   const [orbitSpeedFactor, setOrbitSpeedFactor] = useState(1.0);
   
@@ -73,6 +73,7 @@ export default function KnowledgeGraph() {
   // Three.js References for clean animation updates
   const sceneRef = useRef(null);
   const cameraRef = useRef(null);
+  const controlsRef = useRef(null);
   const rendererRef = useRef(null);
   const animationFrameRef = useRef(null);
   const raycasterRef = useRef(null);
@@ -129,20 +130,21 @@ export default function KnowledgeGraph() {
       }
     }
     
-    const dist = Math.max(15, maxRadius * 1.35);
-    cameraRadiusRef.current = dist;
-    cameraThetaRef.current = 0.0;
-    cameraPhiRef.current = Math.PI / 4;
+    const fov = 50 * (Math.PI / 180);
+    const dist = Math.max(15, maxRadius / Math.tan(fov / 2)) * 1.5;
     
-    if (!targetCamPosRef.current) {
-      targetCamPosRef.current = new THREE.Vector3();
+    if (controlsRef.current) {
+      controlsRef.current.enableDamping = false;
+      controlsRef.current.target.set(0, 0, 0);
+      controlsRef.current.update();
+      controlsRef.current.enableDamping = true;
     }
-    targetCamPosRef.current.set(
-      dist * Math.sin(Math.PI / 4) * Math.sin(0),
-      dist * Math.cos(Math.PI / 4),
-      dist * Math.sin(Math.PI / 4) * Math.cos(0)
-    );
+    if (cameraRef.current) {
+      cameraRef.current.position.set(0, dist * 0.5, dist);
+    }
     targetLookAtRef.current.set(0, 0, 0);
+    if (!targetCamPosRef.current) targetCamPosRef.current = new THREE.Vector3();
+    targetCamPosRef.current.set(0, dist * 0.5, dist);
   };
 
   // Fetch Graph Data
@@ -519,6 +521,13 @@ export default function KnowledgeGraph() {
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.minDistance = 2;
+    controls.maxDistance = 50000;
+    controlsRef.current = controls;
+
     try {
       setTimeout(() => {
         const parentElement = container?.parentElement;
@@ -667,22 +676,6 @@ export default function KnowledgeGraph() {
     }
 
     // Mouse Move & Click Handlers for WebGL Canvas with Orbit & Pan support
-    let dragMoveThreshold = 0;
-
-    const onMouseDown = (event) => {
-      // Left click is rotate, right click (button 2) or shift+left is pan
-      if (event.button === 0 || event.button === 2) {
-        isDraggingRef.current = true;
-        dragModeRef.current = (event.button === 2 || event.shiftKey) ? 'pan' : 'rotate';
-        previousMousePositionRef.current = { x: event.clientX, y: event.clientY };
-        dragMoveThreshold = 0;
-      }
-    };
-
-    const onMouseUp = () => {
-      isDraggingRef.current = false;
-    };
-
     const onMouseMove = (event) => {
       const rect = renderer.domElement.getBoundingClientRect();
       mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -693,40 +686,11 @@ export default function KnowledgeGraph() {
         tooltipRef.current.style.left = `${event.clientX + 15}px`;
         tooltipRef.current.style.top = `${event.clientY + 15}px`;
       }
-
-      if (isDraggingRef.current) {
-        const deltaX = event.clientX - previousMousePositionRef.current.x;
-        const deltaY = event.clientY - previousMousePositionRef.current.y;
-        
-        dragMoveThreshold += Math.abs(deltaX) + Math.abs(deltaY);
-        
-        if (dragModeRef.current === 'rotate') {
-          cameraThetaRef.current -= deltaX * 0.005;
-          cameraPhiRef.current = Math.max(0.05, Math.min(Math.PI / 2 - 0.05, cameraPhiRef.current - deltaY * 0.005));
-        } else if (dragModeRef.current === 'pan') {
-          if (selectedNodeRef.current) {
-            setSelectedNode(null);
-          }
-          const localX = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
-          const localY = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
-          const panSpeed = cameraRadiusRef.current * 0.0015;
-          
-          targetLookAtRef.current.addScaledVector(localX, -deltaX * panSpeed);
-          targetLookAtRef.current.addScaledVector(localY, deltaY * panSpeed);
-        }
-        
-        previousMousePositionRef.current = { x: event.clientX, y: event.clientY };
-      }
     };
 
     let clickTimeout = null;
 
     const onClick = () => {
-      // If mouse dragged, don't trigger click action
-      if (dragMoveThreshold > 5) {
-        return;
-      }
-
       if (clickTimeout !== null) {
         clearTimeout(clickTimeout);
         clickTimeout = null;
@@ -744,41 +708,25 @@ export default function KnowledgeGraph() {
           const nData = clickedMesh.userData;
           setSelectedNode(nData);
           
-          cameraRadiusRef.current = 12.0; // Zoom in close-up
           targetLookAtRef.current.copy(clickedMesh.position);
+          if (cameraRef.current && controlsRef.current) {
+            const offset = cameraRef.current.position.clone().sub(controlsRef.current.target).normalize().multiplyScalar(12.0);
+            targetCamPosRef.current.copy(clickedMesh.position).add(offset);
+          }
+        } else {
+          setSelectedNode(null);
         }
       }, 250);
     };
 
-    const onWheel = (event) => {
-      event.preventDefault();
-      const zoomSpeed = 0.0015;
-      const zoomFactor = Math.exp(event.deltaY * zoomSpeed);
-      cameraRadiusRef.current = Math.max(2.0, Math.min(10000.0, cameraRadiusRef.current * zoomFactor));
-    };
-
-    const onContextMenu = (event) => {
-      event.preventDefault();
-    };
-
-    renderer.domElement.addEventListener('mousedown', onMouseDown);
     renderer.domElement.addEventListener('mousemove', onMouseMove);
-    renderer.domElement.addEventListener('mouseup', onMouseUp);
-    renderer.domElement.addEventListener('mouseleave', onMouseUp);
     renderer.domElement.addEventListener('click', onClick);
-    renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
-    renderer.domElement.addEventListener('contextmenu', onContextMenu);
 
     return () => {
       resizeObserver.disconnect();
       if (renderer.domElement) {
-        renderer.domElement.removeEventListener('mousedown', onMouseDown);
         renderer.domElement.removeEventListener('mousemove', onMouseMove);
-        renderer.domElement.removeEventListener('mouseup', onMouseUp);
-        renderer.domElement.removeEventListener('mouseleave', onMouseUp);
         renderer.domElement.removeEventListener('click', onClick);
-        renderer.domElement.removeEventListener('wheel', onWheel);
-        renderer.domElement.removeEventListener('contextmenu', onContextMenu);
       }
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
@@ -1228,26 +1176,17 @@ export default function KnowledgeGraph() {
         }
       }
 
-      const theta = cameraThetaRef.current;
-      const phi = cameraPhiRef.current;
-      const radius = cameraRadiusRef.current;
-
-      if (!targetCamPosRef.current) {
-        targetCamPosRef.current = new THREE.Vector3();
-      }
-
-      // Calculate target camera position relative to targetLookAt using spherical coordinates
-      targetCamPosRef.current.set(
-        radius * Math.sin(phi) * Math.sin(theta),
-        radius * Math.cos(phi),
-        radius * Math.sin(phi) * Math.cos(theta)
-      ).add(targetLookAtRef.current);
-
-      camera.position.lerp(targetCamPosRef.current, 0.08);
-      
-      if (targetLookAtRef.current) {
-        currentLookAtRef.current.lerp(targetLookAtRef.current, 0.08);
-        camera.lookAt(currentLookAtRef.current);
+      if (controlsRef.current) {
+        controlsRef.current.target.lerp(targetLookAtRef.current, 0.1);
+        
+        // If we recently selected a node or reset, smoothly move camera to targetCamPosRef
+        if (targetCamPosRef.current && camera.position.distanceTo(targetCamPosRef.current) > 0.1) {
+           camera.position.lerp(targetCamPosRef.current, 0.05);
+        } else {
+           targetCamPosRef.current.copy(camera.position);
+        }
+        
+        controlsRef.current.update();
       }
 
       renderer.render(scene, camera);
@@ -1985,29 +1924,11 @@ export default function KnowledgeGraph() {
 
                   <button
                     type="button"
-                    onClick={() => setLayoutMode('galaxy')}
-                    className={`disk-btn-cardinal cardinal-top ${layoutMode === 'galaxy' ? 'selected' : ''}`}
-                    title="切换到星系漩涡模式 (Spiral)"
-                  >
-                    漩涡
-                  </button>
-
-                  <button
-                    type="button"
                     onClick={handleResetCamera}
                     className="disk-btn-cardinal cardinal-right"
                     title="重置观测视角"
                   >
                     重置
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setLayoutMode('solar')}
-                    className={`disk-btn-cardinal cardinal-bottom ${layoutMode === 'solar' ? 'selected' : ''}`}
-                    title="切换到天体轨道模式 (Solar)"
-                  >
-                    轨道
                   </button>
 
                   <button

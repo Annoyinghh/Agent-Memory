@@ -2945,6 +2945,7 @@ export default function SPAHomepage() {
                       <h3 className="text-cyan font-mono">6. 知识图谱 (Galaxy Graph)</h3>
                       <p className="font-mono">基于 AST 语法树的代码全局结构可视化：</p>
                       <ul className="font-mono">
+                        <li><strong>交互操作</strong>：<span className="text-cyan">左键拖拽</span>旋转视角，<span className="text-purple">右键拖拽</span>（或 Shift+左键）自由平移图谱，<span className="text-green">滚轮</span>缩放远近，<span className="text-cyan">左键点击</span>节点可自动拉近并聚焦中心。</li>
                         <li><strong>代码提取</strong>：点击 <code>📂 提取代码库</code> 填入本地代码库绝对路径，Graphify 将利用 Tree-Sitter 语法解析符号、依赖、函数并直接导入图谱。</li>
                         <li><strong>离线导入</strong>：点击 <code>📥 导入 graph.json</code> 填入离线 JSON 文件路径，快速复原 AST 节点。</li>
                         <li><strong>拓扑寻路</strong>：在两颗星体之间查询最短调用路径（Max Depth: 5），路径以亮绿色线条发光高亮展示。</li>
