@@ -22,14 +22,14 @@ WORKDIR /app
 
 # 1) API/MCP layer dependencies (fastapi, uvicorn, chromadb, litellm, mcp, pydantic).
 COPY Agent-Memory-Server/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir -r /tmp/requirements.txt
 
 # 2) Local graphify extraction package — networkx/numpy/rapidfuzz + ~30 tree-sitter
 #    language bindings. These all ship manylinux wheels for cpython 3.11, so no
 #    compiler toolchain is needed. If a future binding drops its wheel, add
 #    `build-essential` here before this step.
 COPY Agent-Memory-Graphify /tmp/graphify
-RUN pip install --no-cache-dir /tmp/graphify \
+RUN pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir /tmp/graphify \
     && rm -rf /tmp/graphify /tmp/requirements.txt
 
 # 2a) C build toolchain for headroom-ai[all]'s source sdists (hnswlib and friends build
@@ -47,7 +47,8 @@ RUN apt-get update \
 #     visible via headroom_stats (MCP) or GET /api/compress/stats.
 RUN set +e; \
     for i in $(seq 1 8); do \
-      pip install --no-cache-dir --retries 6 --timeout 300 "headroom-ai[all]" \
+      pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 \
+        && pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir --retries 6 --timeout 300 "headroom-ai[all]" \
         && python -c "import headroom" && { echo "HEADROOM_INSTALL_OK"; break; }; \
       echo ">>> headroom install attempt $i failed, retrying in 12s"; sleep 12; \
     done; \
@@ -71,7 +72,12 @@ RUN set +e; \
 # 3) Pre-download chromadb's default embedding model (all-MiniLM-L6-v2 ONNX, ~80MB)
 #    into the image. Without this, the FIRST extraction in a fresh container hangs
 #    on a slow runtime download; baking it in makes extraction work offline & fast.
-RUN python -c "import chromadb; from chromadb.utils import embedding_functions as e; e.DefaultEmbeddingFunction()(['warmup'])"
+RUN set +e; \
+    for i in $(seq 1 8); do \
+      python -c "import chromadb; from chromadb.utils import embedding_functions as e; e.DefaultEmbeddingFunction()(['warmup'])" \
+        && { echo "CHROMADB_WARMUP_OK"; break; }; \
+      echo ">>> chromadb warmup attempt $i failed, retrying in 12s"; sleep 12; \
+    done
 
 # 3) Application source (api.py, server.py, memory_engine.py, graphify_bridge.py, ...).
 COPY Agent-Memory-Server /app

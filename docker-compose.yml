@@ -41,10 +41,17 @@ services:
       # Persistent writable graphify AST cache (so re-extraction is faster and
       # never touches the source mount). See GRAPHIFY_CACHE_DIR above.
       - graphify-cache:/app/.graphify-cache
-      # shipbearERP 代码库只读挂载，供 graphify 读取抽取。:ro 安全——缓存走上面的卷，
+      # 目标代码库只读挂载，供 graphify 读取抽取。:ro 安全——缓存走上面的卷，
       # graphify 不会往源码仓库写任何东西（graphify-out/cache → GRAPHIFY_CACHE_DIR）。
-      - E:/shipbearERP-master:/workspace:ro
+      - ${WORKSPACE_DIR:-.}:/workspace:ro
     restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8900/health',timeout=3).status==200 else 1)"]
       interval: 15s
@@ -76,10 +83,17 @@ services:
       - ./Agent-Memory-Server/data:/app/data
       - graphify-cache:/app/.graphify-cache
       # 代码库（只读），供 sync_codebase / precise_source_search。
-      - E:/shipbearERP-master:/workspace:ro
+      - ${WORKSPACE_DIR:-.}:/workspace:ro
       # 开发期：让本服务直接用本地 server.py（免为这点改动重建镜像）。重建镜像后可删此行。
       - ./Agent-Memory-Server/server.py:/app/server.py:ro
     restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     depends_on:
       backend:
         condition: service_healthy
