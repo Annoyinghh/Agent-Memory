@@ -266,10 +266,41 @@ export default function TutorialBook() {
             <pre style={{ background: 'rgba(0,0,0,0.5)', padding: '6px', borderRadius: '4px', overflowX: 'auto', border: '1px solid rgba(255,255,255,0.05)', color: '#fff', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', marginBottom: '8px' }}>
               docker compose up -d mcp
             </pre>
-            <p style={{ color: 'hsl(var(--text-muted))', marginBottom: '8px' }}>远端机器一行接入（IP 换成服务器实际地址）：</p>
-            <pre style={{ background: 'rgba(0,0,0,0.5)', padding: '6px', borderRadius: '4px', overflowX: 'auto', border: '1px solid rgba(255,255,255,0.05)', color: '#fff', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', marginBottom: '8px' }}>
-              claude mcp add --transport http agent-memory http://192.168.110.109:8901/mcp
-            </pre>
+            <p style={{ color: 'hsl(var(--text-muted))', marginBottom: '8px' }}>远端机器一行接入（IP 换成服务器实际地址，跟随上方 Tab 自动切换）：</p>
+            <div style={{ background: 'rgba(8,7,5,0.4)', border: '1px solid rgba(255,187,0,0.08)', borderRadius: '6px', padding: '10px', fontSize: '10px', lineHeight: '1.6', marginBottom: '8px' }}>
+              {mcpClientTab === 'claude' && (
+                <>
+                  <div style={{ marginBottom: '6px' }}><strong>Claude Code 接入命令:</strong></div>
+                  <pre style={{ background: 'rgba(0,0,0,0.5)', padding: '6px', borderRadius: '4px', overflowX: 'auto', border: '1px solid rgba(255,255,255,0.05)', color: '#fff', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                    claude mcp add --transport http agent-memory http://192.168.110.109:8901/mcp
+                  </pre>
+                </>
+              )}
+              {mcpClientTab === 'codex' && (
+                <>
+                  <div style={{ marginBottom: '6px' }}><strong>Codex 接入命令:</strong></div>
+                  <pre style={{ background: 'rgba(0,0,0,0.5)', padding: '6px', borderRadius: '4px', overflowX: 'auto', border: '1px solid rgba(255,255,255,0.05)', color: '#fff', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                    codex mcp add --transport http agent-memory http://192.168.110.109:8901/mcp
+                  </pre>
+                </>
+              )}
+              {mcpClientTab === 'gemini' && (
+                <>
+                  <div style={{ marginBottom: '6px' }}><strong>Gemini CLI 接入命令:</strong></div>
+                  <pre style={{ background: 'rgba(0,0,0,0.5)', padding: '6px', borderRadius: '4px', overflowX: 'auto', border: '1px solid rgba(255,255,255,0.05)', color: '#fff', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                    gemini mcp add agent-memory http://192.168.110.109:8901/mcp
+                  </pre>
+                </>
+              )}
+              {mcpClientTab === 'antigravity' && (
+                <>
+                  <div style={{ marginBottom: '6px' }}><strong>Antigravity 接入命令:</strong> (与 Gemini CLI 格式相同)</div>
+                  <pre style={{ background: 'rgba(0,0,0,0.5)', padding: '6px', borderRadius: '4px', overflowX: 'auto', border: '1px solid rgba(255,255,255,0.05)', color: '#fff', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                    gemini mcp add agent-memory http://192.168.110.109:8901/mcp
+                  </pre>
+                </>
+              )}
+            </div>
             <div className="sci-note-text" style={{ marginTop: '4px' }}>
               ⚠️ 默认无鉴权，仅在可信内网用；本机 stdio MCP 与该 HTTP 服务共存、不冲突（读写同一库，已实测并发正常）。
             </div>
