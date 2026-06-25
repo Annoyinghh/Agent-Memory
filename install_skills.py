@@ -149,6 +149,85 @@ def write_gemini_project_mcp(project_root, use_docker=True):
         print(f"  [Failed] Gemini project config: {e}")
 
 
+# ── Reasonix (no `mcp add`; append [[plugins]] to the USER-LEVEL config.toml) ─
+
+# Managed-block markers make the registration idempotent: a re-run strips the
+# previous auto-managed block before appending a fresh one (no duplicate plugins).
+REASONIX_BEGIN = "# >>> agent-memory MCP (managed by install_skills.py) >>>"
+REASONIX_END = "# <<< agent-memory MCP (managed by install_skills.py) <<<"
+
+
+def _reasonix_user_config_path() -> str:
+    """Reasonix user-level config (v1.8.1+). Lives outside any one project, so the
+    plugin is available in every project the user opens with Reasonix."""
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "reasonix", "config.toml")
+    return os.path.join(os.path.expanduser("~"), ".config", "reasonix", "config.toml")
+
+
+def _toml_basic_string(s: str) -> str:
+    """Quote a TOML basic (double-quoted) string, escaping backslash and quote."""
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _reasonix_plugin_block(use_docker, project_root) -> str:
+    """A marker-delimited [[plugins]] TOML block for Reasonix (stdio transport)."""
+    if use_docker:
+        args = _docker_run_args(_data_volume_arg(project_root))
+        command = "docker"
+    else:
+        python_exe, server_py = _local_python_and_server(project_root)
+        args = [python_exe, server_py]
+        command = python_exe
+    args_toml = ", ".join(_toml_basic_string(a) for a in args)
+    return (
+        f"{REASONIX_BEGIN}\n"
+        "[[plugins]]\n"
+        'name = "agent-memory"\n'
+        f"command = {_toml_basic_string(command)}\n"
+        f"args = [{args_toml}]\n"
+        f"{REASONIX_END}\n"
+    )
+
+
+def write_reasonix_user_config(project_root, use_docker=True):
+    """Append the agent-memory plugin to Reasonix's user-level config.toml.
+
+    Reasonix has no `mcp add` CLI, and its project-level reasonix.toml only applies
+    inside that one directory — so we write the user-level config (every project the
+    user opens then sees the plugin). We use [[plugins]] directly, NOT a project
+    .mcp.json (Claude Code also reads .mcp.json, which would double-register). The
+    block is wrapped in managed markers so re-runs are idempotent (no duplicates).
+    """
+    import re
+    path = _reasonix_user_config_path()
+    existing = ""
+    if os.path.exists(path):
+        try:
+            existing = open(path, encoding="utf-8").read()
+        except Exception:
+            existing = ""
+    # Idempotency: drop any prior managed block before re-appending.
+    pattern = re.compile(
+        re.escape(REASONIX_BEGIN) + r".*?" + re.escape(REASONIX_END) + r"\n?",
+        re.DOTALL,
+    )
+    existing = pattern.sub("", existing)
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    if existing and not existing.endswith("\n\n"):
+        existing += "\n"
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        open(path, "w", encoding="utf-8").write(
+            existing + _reasonix_plugin_block(use_docker, project_root)
+        )
+        print(f"  [OK] Reasonix user config updated: {path}")
+    except Exception as e:
+        print(f"  [Failed] Reasonix user config: {e}")
+
+
 def register_mcp_servers(project_root, use_docker=True):
     print("\nRegistering MCP server via CLI tools...")
 
@@ -193,6 +272,10 @@ def register_mcp_servers(project_root, use_docker=True):
     # Gemini/Antigravity: write project-level config directly (see write_gemini_project_mcp).
     print("Registering Gemini / Antigravity (project config)...")
     write_gemini_project_mcp(project_root, use_docker=use_docker)
+
+    # Reasonix: no `mcp add` CLI; append [[plugins]] to the user-level config.toml.
+    print("Registering Reasonix (user config.toml)...")
+    write_reasonix_user_config(project_root, use_docker=use_docker)
 
 
 # ── entrypoint ────────────────────────────────────────────────────────────────
