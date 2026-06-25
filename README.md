@@ -176,7 +176,9 @@ claude mcp add --transport http agent-memory http://<服务器IP>:8901/mcp
 claude mcp add --transport http agent-memory http://192.168.110.109:8901/mcp
 ```
 
-> Codex / Gemini CLI 用各自等价的 HTTP 传输注册（如 `codex mcp add --transport http ... <url>` / `gemini mcp add ... <url>`）。
+> 其他 CLI 用各自等价的 HTTP 传输接入：
+> - **Codex / Gemini CLI**：`codex mcp add --transport http ... <url>` / `gemini mcp add ... <url>`
+> - **Reasonix**：无 `mcp add`，编辑 `reasonix.toml` 的 `[[plugins]]` 或放项目根 `.mcp.json`（字段同 Claude Code）—— 见下方「Reasonix（reasonix.toml / .mcp.json）」。
 
 要点：
 - **本机 per-call stdio MCP 与这个长驻 HTTP MCP 共存**，不冲突；两者读写同一份 `/app/data`（**已实测**：MCP 容器写入、REST 容器立即可见，并发正常，无 ChromaDB 句柄失效）。
@@ -266,10 +268,59 @@ python install_skills.py --skip-mcp # 只分发 SKILL.md，不动 MCP 配置
 | **Codex** | `codex mcp add agent-memory -- docker run -i --rm -v <DATA>:/app/data agent-memory-server python server.py` | 全局：`~/.codex/config.toml`<br>项目：`.codex/config.toml` | 全局：`~/.codex/skills/`<br>项目：`.codex/skills/` |
 | **Gemini CLI** | `gemini mcp add agent-memory docker run -i --rm -v <DATA>:/app/data agent-memory-server python server.py` | 全局：`~/.gemini/config.json`<br>项目：`.gemini/settings.json` | 全局：`~/.gemini/skills/`<br>项目：`.gemini/skills/` |
 | **Antigravity** | *(同 Gemini CLI)* | 全局：`~/.gemini/config.json`<br>项目：`.gemini/settings.json` | 项目：`.agents/skills/` |
+| **Reasonix** | *(无 `mcp add`；编辑 `reasonix.toml` 的 `[[plugins]]`，或放项目根 `.mcp.json`)* | 全局：`~/.config/reasonix/config.toml`<br>项目：`./reasonix.toml` / `.mcp.json` | 通过 MCP 接入，无需 skill 文件 |
 
 > 💡 **`<DATA>`**：data 卷的宿主绝对路径，正斜杠写法。例：`E:/Agent-Memory/Agent-Memory-Server/data`（Windows）/ `/home/user/Agent-Memory/Agent-Memory-Server/data`（Linux）/ `/Users/user/...`（macOS）。
 >
 > 旧版（已废弃）：`<python_path> <server_path>` 直接用 conda python 跑 server.py。`install_skills.py --local` 仍保留此模式，但与 Docker backend 并存会触发数据竞态，**不要混用**。
+
+### Reasonix（reasonix.toml / .mcp.json）
+
+[Reasonix](https://github.com/esengine/DeepSeek-Reasonix)（DeepSeek 原生终端 agent，`npm i -g reasonix`）是标准 MCP 客户端，支持 **stdio + Streamable HTTP**。它**没有 `mcp add` 子命令**，而是读**项目根 `reasonix.toml`** 的 `[[plugins]]` 条目（`type` 选 transport），或**项目根 `.mcp.json`**（字段与 Claude Code 完全一致，字段对字段映射；两源合并，同名时 `reasonix.toml` 胜）。
+
+**① 远程（streamable-http，跨机器，推荐）**——走上面的长驻 `mcp` 服务（8901）。`reasonix.toml`：
+
+```toml
+[[plugins]]
+name = "agent-memory"
+type = "http"
+url = "http://<服务器IP>:8901/mcp"
+```
+
+或项目根 `.mcp.json`（等价）：
+
+```json
+{
+  "mcpServers": {
+    "agent-memory": { "type": "http", "url": "http://<服务器IP>:8901/mcp" }
+  }
+}
+```
+
+**② 本地（stdio，per-call 容器，与 Claude Code stdio MCP 等价）**——把 `<DATA>`/`<REPO>`/`<GRAPHIFY_CACHE>` 换成实际宿主路径（Windows 用正斜杠）：
+
+```toml
+[[plugins]]
+name = "agent-memory"
+command = "docker"
+args = [
+  "run", "-i", "--rm",
+  "-v", "<DATA>:/app/data",
+  "-v", "<REPO>:/workspace:ro",                 # 可选，只读挂载代码库，供 sync_codebase / precise_source_search
+  "-v", "<GRAPHIFY_CACHE>:/app/.graphify-cache",
+  "-e", "PYTHONIOENCODING=utf-8",
+  "-e", "GRAPHIFY_CACHE_DIR=/app/.graphify-cache",
+  "-e", "HEADROOM_TELEMETRY=off",
+  "-e", "HEADROOM_CCR_DIR=/app/data/headroom-ccr",
+  "agent-memory-server", "python", "server.py",
+]
+```
+
+> `<DATA>` 同上表；`<REPO>` 例 `E:/shipbearERP-master`；`<GRAPHIFY_CACHE>` 例 `E:/Agent-Memory/.mcp-graphify-cache`。不需要检索代码库的可删掉 `<REPO>` 那两行 `-v`/`-e`。
+>
+> **验证**：`reasonix doctor`（健康检查含 MCP 连线）→ `reasonix chat` 里打 `/mcp` 列出已连服务器与工具（工具名 `mcp__agent-memory__<tool>`）。
+>
+> 配置文件位置：项目级 `./reasonix.toml`（或 `.mcp.json`）；用户级 macOS/Linux `~/.config/reasonix/config.toml`、Windows `%AppData%\reasonix\config.toml`（v1.8.1+）。
 
 ---
 
