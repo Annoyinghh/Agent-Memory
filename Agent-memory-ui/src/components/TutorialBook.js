@@ -206,7 +206,7 @@ export default function TutorialBook() {
             </p>
 
             <div className="sub-mode-toggle-bar" style={{ marginBottom: '10px', borderBottom: 'none' }}>
-              {['claude', 'codex', 'gemini', 'antigravity'].map((tab) => (
+              {['claude', 'codex', 'gemini', 'antigravity', 'reasonix'].map((tab) => (
                 <button
                   key={tab}
                   type="button"
@@ -218,6 +218,7 @@ export default function TutorialBook() {
                   {tab === 'codex' && 'Codex'}
                   {tab === 'gemini' && 'Gemini CLI'}
                   {tab === 'antigravity' && 'Antigravity'}
+                  {tab === 'reasonix' && 'Reasonix'}
                 </button>
               ))}
             </div>
@@ -252,6 +253,17 @@ export default function TutorialBook() {
                   <div style={{ marginBottom: '6px' }}><strong>MCP 注册命令:</strong> (与 Gemini CLI 格式相同)</div>
                   <pre style={{ background: 'rgba(0,0,0,0.5)', padding: '6px', borderRadius: '4px', overflowX: 'auto', border: '1px solid rgba(255,255,255,0.05)', color: '#fff', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                     gemini mcp add agent-memory docker run -i --rm -v &lt;DATA&gt;:/app/data agent-memory-server python server.py
+                  </pre>
+                </>
+              )}
+              {mcpClientTab === 'reasonix' && (
+                <>
+                  <div style={{ marginBottom: '6px' }}><strong>reasonix.toml [[plugins]]（或项目根 .mcp.json）:</strong></div>
+                  <pre style={{ background: 'rgba(0,0,0,0.5)', padding: '6px', borderRadius: '4px', overflowX: 'auto', border: '1px solid rgba(255,255,255,0.05)', color: '#fff', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+{`[[plugins]]
+name = "agent-memory"
+command = "docker"
+args = ["run", "-i", "--rm", "-v", "<DATA>:/app/data", "-e", "PYTHONIOENCODING=utf-8", "agent-memory-server", "python", "server.py"]`}
                   </pre>
                 </>
               )}
@@ -297,6 +309,17 @@ export default function TutorialBook() {
                   <div style={{ marginBottom: '6px' }}><strong>Antigravity 接入命令:</strong> (与 Gemini CLI 格式相同)</div>
                   <pre style={{ background: 'rgba(0,0,0,0.5)', padding: '6px', borderRadius: '4px', overflowX: 'auto', border: '1px solid rgba(255,255,255,0.05)', color: '#fff', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                     gemini mcp add agent-memory http://192.168.110.109:8901/mcp
+                  </pre>
+                </>
+              )}
+              {mcpClientTab === 'reasonix' && (
+                <>
+                  <div style={{ marginBottom: '6px' }}><strong>Reasonix 接入（reasonix.toml, HTTP transport）:</strong></div>
+                  <pre style={{ background: 'rgba(0,0,0,0.5)', padding: '6px', borderRadius: '4px', overflowX: 'auto', border: '1px solid rgba(255,255,255,0.05)', color: '#fff', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+{`[[plugins]]
+name = "agent-memory"
+type = "http"
+url = "http://192.168.110.109:8901/mcp"`}
                   </pre>
                 </>
               )}
