@@ -79,3 +79,19 @@ When starting a session or working in a workspace, **always call `project_overvi
   Gets graph statistics.
 - `import_graph(nodes, edges, namespace)`:
   Batch imports JSON lists of nodes/edges.
+
+### 6. Token Compression (headroom — optional, reversible, use selectively)
+
+headroom shrinks context **before** it reaches the model — JSON/logs up to ~-90%, code ~-50%, prose ~-30% — and it's **reversible**: each compressed block carries a `retrieve=` key; call `headroom_retrieve(key)` for the full original. Use it to fit more into a token budget, **not** on every call.
+
+**Compress when the context is large or the budget is tight:**
+- `pack_context` would otherwise truncate or omit relevant memories → pass `compress=true`: `pack_context(namespace, query, max_tokens, compress=true)`. Each memory block is shrunk (and tagged with a `retrieve=` key) so more memories fit the budget.
+- You're about to reason over a **large** blob — a long file, big log/JSON/API response, or verbose stack trace → call `headroom_compress(text)` first, reason over the compressed form, and `headroom_retrieve(key)` only if you need the exact original.
+
+**Don't compress (the default — skip the overhead):** small snippets, short answers, routine lookups; or when the user needs the verbatim original in your reply.
+
+- `headroom_compress(text, language?)` → `{compressed, key, ratio, method}`. `method="passthrough"` means no savings (headroom judged it not worth compressing) — use the original as-is.
+- `headroom_retrieve(key)` → the full original text.
+- `headroom_stats()` → availability/config. Compression is an optional dependency; it degrades to passthrough if absent.
+
+> headroom compresses what you **send** to the model (input). It cannot shrink what the model **writes back** — keep your own outputs concise regardless.
