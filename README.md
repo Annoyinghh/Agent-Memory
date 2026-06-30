@@ -614,6 +614,65 @@ project_overview()
 
 全量 `rebuild` 会对**所有文件重新向量化**（耗时主因）。改了几个文件想快速同步时，用**增量更新**（`incremental=true`，见上方「方式一·补充」）——只对内容变化的文件重新向量化，未变文件保留原向量，通常几秒搞定。需要重排社区着色时再用一次全量 `rebuild`。
 
+## 代码智能查询（CBM 风格）
+
+> 对齐 [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) 的「用图查询代替 grep/read」思路。图谱建好后，优先用这些结构化查询工具——一次调用代替数十次文件打开。MCP 与 REST 双通道。
+
+### 查询工具
+
+| 工具 | 作用 | REST |
+|---|---|---|
+| `get_graph_schema` | 图谱自省：node/edge 计数、类型/关系分布、degree 分布 | `GET /api/graph/schema` |
+| `get_architecture` | 架构总览：类型/文件/语言/社区/热点/入口候选 | `GET /api/graph/architecture` |
+| `search_graph` | 结构化搜索：type / 文件 / 名称正则 / degree / 分页 | `POST /api/graph/search-structured` |
+| `trace_path` | 调用链 BFS：谁调用 X / X 调用谁（depth 1-5） | `POST /api/graph/trace` |
+| `get_code_snippet` | 按符号（node_id 或名）读带行号源码 | `POST /api/graph/snippet` |
+| `dead_code` | 死代码：零入度（calls/method/references）函数 | `GET /api/graph/dead-code` |
+| `detect_changes` | git diff → 受影响符号 + blast radius + 风险分级（无 git → hash-diff 兜底） | `POST /api/graph/changes` |
+
+**典型流程：** `project_overview` → `get_graph_schema`/`get_architecture`（摸结构）→ `search_graph`（找节点）→ `trace_path`（看调用链）→ `get_code_snippet`（读代码）→ `detect_changes`（看改动影响）。
+
+> `trace_path` 的 `start` 若匹配多个节点，返回候选列表——用 `search_graph` 拿到精确 `node_id` 后再调用。
+
+### `node_type` 是粗粒度（重要）
+
+graphify 不发节点类型，系统推断为 `{function, class, file, document, rationale, symbol}` 之一。**方法也是 function**（靠 `.name()` 标签区分）。没有 CBM 那种 Function/Method/Interface 细粒度——过滤时别按细粒度期望。
+
+### auto-sync（后台自动增量同步，默认关）
+
+源码变了不用手动 rebuild。开启后 backend 后台轮询文件 hash 变化，自动增量重提取：
+
+```yaml
+# docker-compose.yml → backend.environment
+AUTO_SYNC_ENABLED: 1            # 开启（默认 0）
+AUTO_SYNC_INTERVAL: 60          # 秒
+AUTO_SYNC_NAMESPACES: ""        # 空 = 所有已索引 namespace
+AUTO_SYNC_TARGETS: "shipbearERP-master=/workspace"
+AUTO_SYNC_MAX_FILES: 10000
+```
+
+日志看 `docker compose logs backend` 里的 `[auto-sync]` 行。**用轮询而非 inotify**——Windows + Docker bind-mount 不传播文件事件。
+
+### 团队共享图工件（跳过重复索引）
+
+把图谱导出成可 commit 的文件，队友 restore 后**跳过全量提取 + embedding**：
+
+```bash
+# 1. owner 导出（写 <data>/artifacts/<ns>.json.gz + 返回 checksum/计数）
+curl "http://localhost:8900/api/graph/artifact/manifest?namespace=myproject"
+# 2. 下载并 commit 进你的 repo
+curl -OJ "http://localhost:8900/api/graph/artifact?namespace=myproject"
+git add myproject.json.gz && git commit && git push
+# 3. 队友 pull 后上传恢复（后台任务，轮询 GET /api/tasks/{task_id}）
+curl -F "file=@myproject.json.gz" "http://localhost:8900/api/graph/artifact/restore"
+```
+
+### 速度现实（诚实说明）
+
+- **首次全量重建**：分钟级（1 万节点）。慢在 embedding（每节点过 ONNX 推理），Python + ChromaDB 架构绕不开，**做不到 CBM 那种毫秒级**（那是 C + RAM-first + 无重型 embedding 的红利）。
+- **日常增量**：秒级。只重提变化的文件（auto-sync 自动跑）。这才是实际可用的速度感。
+- 对照：CBM 首次 Linux kernel 全量也要 3 分钟，毫秒级指的是它的日常增量/查询。
+
 ## 备份与恢复 (Backup / Restore)
 
 把一个 namespace 的**完整快照**（记忆 + 图谱节点/边 + **原始 ChromaDB 向量** + 提取清单 + sessions + 工作记忆）导出为单个 `.json.gz` 文件，可跨机器迁移或从误删/数据损坏中恢复。
