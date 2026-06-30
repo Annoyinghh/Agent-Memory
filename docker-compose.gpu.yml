@@ -1,0 +1,22 @@
+# GPU 加速 override（可选）。
+# 仅在装了 NVIDIA GPU + nvidia-container-toolkit 的机器启用，否则容器起不来：
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# 无 GPU / WSL 无 nvidia adapter 的机器，正常 `docker compose up -d` 即可（不挂 GPU）。
+# 注：主镜像里 headroom-ai[all] 已装 cu121 torch；embedding 走 ONNX CPU，GPU 主要惠及 headroom/压缩。
+services:
+  backend:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+  mcp:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

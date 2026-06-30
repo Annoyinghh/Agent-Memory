@@ -60,13 +60,6 @@ services:
       - ./Agent-Memory-Server/watcher.py:/app/watcher.py:ro
       - ./Agent-Memory-Server/api.py:/app/api.py:ro
     restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8900/health',timeout=3).status==200 else 1)"]
       interval: 15s
@@ -106,13 +99,6 @@ services:
       - ./Agent-Memory-Server/code_query.py:/app/code_query.py:ro
       - ./Agent-Memory-Server/watcher.py:/app/watcher.py:ro
     restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     depends_on:
       backend:
         condition: service_healthy
