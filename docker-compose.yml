@@ -35,6 +35,15 @@ services:
       HEADROOM_TELEMETRY: ${HEADROOM_TELEMETRY:-off}
       HEADROOM_CCR_DIR: /app/data/headroom-ccr
       HEADROOM_ENABLED: ${HEADROOM_ENABLED:-1}
+      # auto-sync watcher（默认关）。开启后后台轮询文件变化→增量重提取。
+      # AUTO_SYNC_NAMESPACES 空时自动覆盖所有已索引 namespace；AUTO_SYNC_TARGETS
+      # 形如 "ns=/workspace"；详见 watcher.py。
+      AUTO_SYNC_ENABLED: ${AUTO_SYNC_ENABLED:-0}
+      AUTO_SYNC_INTERVAL: ${AUTO_SYNC_INTERVAL:-60}
+      AUTO_SYNC_NAMESPACES: ${AUTO_SYNC_NAMESPACES:-}
+      AUTO_SYNC_TARGETS: ${AUTO_SYNC_TARGETS:-}
+      AUTO_SYNC_MAX_FILES: ${AUTO_SYNC_MAX_FILES:-10000}
+      CODEBASE_SOURCE_DIR: ${CODEBASE_SOURCE_DIR:-/workspace}
     volumes:
       # Persist the existing SQLite + ChromaDB. Single owner = this container.
       - ./Agent-Memory-Server/data:/app/data
@@ -44,6 +53,12 @@ services:
       # 目标代码库只读挂载，供 graphify 读取抽取。:ro 安全——缓存走上面的卷，
       # graphify 不会往源码仓库写任何东西（graphify-out/cache → GRAPHIFY_CACHE_DIR）。
       - ${WORKSPACE_DIR:-.}:/workspace:ro
+      # 开发期：把后端 Python 源码直接挂进容器，改完 `docker compose restart backend`
+      # 即生效，免重建镜像。重建镜像后（生产部署）可删这几行。
+      - ./Agent-Memory-Server/memory_engine.py:/app/memory_engine.py:ro
+      - ./Agent-Memory-Server/code_query.py:/app/code_query.py:ro
+      - ./Agent-Memory-Server/watcher.py:/app/watcher.py:ro
+      - ./Agent-Memory-Server/api.py:/app/api.py:ro
     restart: unless-stopped
     deploy:
       resources:
@@ -84,8 +99,12 @@ services:
       - graphify-cache:/app/.graphify-cache
       # 代码库（只读），供 sync_codebase / precise_source_search。
       - ${WORKSPACE_DIR:-.}:/workspace:ro
-      # 开发期：让本服务直接用本地 server.py（免为这点改动重建镜像）。重建镜像后可删此行。
+      # 开发期：让本服务直接用本地源码（server.py + engine + 查询层 + watcher），
+      # 免为新工具重建镜像。重建镜像后可删这几行。
       - ./Agent-Memory-Server/server.py:/app/server.py:ro
+      - ./Agent-Memory-Server/memory_engine.py:/app/memory_engine.py:ro
+      - ./Agent-Memory-Server/code_query.py:/app/code_query.py:ro
+      - ./Agent-Memory-Server/watcher.py:/app/watcher.py:ro
     restart: unless-stopped
     deploy:
       resources:

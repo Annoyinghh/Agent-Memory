@@ -4,6 +4,7 @@ pydantic>=2.0.0
 litellm
 fastapi
 uvicorn
+networkx  # Louvain community detection (get_architecture); also a graphify transitive dep
 # headroom-ai[all] — optional reversible context compression (code/JSON/logs/prose).
 # Installed via the Dockerfile in a BEST-EFFORT retry loop (large: pulls PyTorch + Kompress).
 # If the build network cannot fetch it, the image still builds and compression silently

@@ -35,9 +35,11 @@ RUN pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir /tmp/
 # 2a) C build toolchain for headroom-ai[all]'s source sdists (hnswlib and friends build
 #     from source on python:3.11-slim, which ships no compiler). ~200MB; required for the
 #     headroom install below to succeed. Kept unconditionally so a flaky headroom install
-#     can be retried without re-running apt.
+#     can be retried without re-running apt. Also installs `git` — needed by the
+#     detect_changes tool (git diff → impacted symbols); without it detect_changes
+#     gracefully falls back to a content-hash diff at runtime.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential python3-dev \
+    && apt-get install -y --no-install-recommends build-essential python3-dev git \
     && rm -rf /var/lib/apt/lists/*
 
 # 2b) headroom-ai[all] — optional reversible context compression (pulls PyTorch + Kompress,

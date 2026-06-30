@@ -95,3 +95,22 @@ headroom shrinks context **before** it reaches the model — JSON/logs up to ~-9
 - `headroom_stats()` → availability/config. Compression is an optional dependency; it degrades to passthrough if absent.
 
 > headroom compresses what you **send** to the model (input). It cannot shrink what the model **writes back** — keep your own outputs concise regardless.
+
+### 7. Codebase Intelligence (CBM-style structural queries)
+
+Once a namespace is indexed (graph extracted), prefer these **graph queries over grep/read** — one call replaces dozens of file opens. Typical flow: `project_overview` → `get_graph_schema`/`get_architecture` to see the shape → `search_graph` to find nodes → `trace_path` for call chains → `get_code_snippet` for the exact code → `detect_changes` to see what uncommitted edits affect.
+
+- `get_graph_schema(namespace?)`: node/edge totals, per-`node_type` + per-relation counts, degree distribution. **Run first** to learn a namespace's shape. (Extends `graph_stats`.)
+- `get_architecture(namespace, hotspot_top=20)`: one-shot overview — type counts, file/language breakdown, Louvain communities, top-degree hotspots, and entry-point candidates.
+- `search_graph(namespace, node_type?, source_file_regex?, name_regex?, min_degree?, max_degree?, limit, offset)`: structured filter over code nodes with pagination. `name_regex`/`source_file_regex` are Python `re.search` against the label / file path.
+- `trace_path(namespace, start, direction="outbound"|"inbound"|"both", relation="calls", depth=1-5)`: BFS call chain. `start` = `node_id`, exact `external_id`, or a literal name substring. If multiple nodes match, the result returns `candidates` — re-call with an exact `node_id`.
+- `get_code_snippet(namespace, node_id?|qualified_name?, context_lines=6)`: numbered source lines for a symbol (resolves file+line from the graph node).
+- `dead_code(namespace, limit=500)`: function nodes with zero inbound `calls`/`method`/`references` (heuristic — real entry points may appear too).
+- `detect_changes(namespace, base="HEAD")`: maps uncommitted git diff to affected symbols + blast radius (depth 2) + risk (high/medium/low). Falls back to a content-hash diff (`git_unavailable=true`) if git isn't installed.
+
+**Coarse `node_type`:** graphify emits no type; the engine infers one of `{function, class, file, document, rationale, symbol}`. Methods are typed `function` (a `.name()` label distinguishes them). There is no fine-grained Function/Method/Interface split — don't filter expecting one.
+
+### 8. Team-shared graph artifact & auto-sync
+
+- **Team artifact (skip re-indexing across a team):** `build_team_artifact(namespace)` writes a stable-path `.json.gz` (checksum + counts); download via `GET /api/graph/artifact?namespace=<ns>`, commit it into your repo, and teammates restore via `POST /api/graph/artifact/restore` (or `restore_team_artifact(file_path=...)`) — vectors import verbatim, so no re-extraction/re-embedding.
+- **Auto-sync (backend, off by default):** set `AUTO_SYNC_ENABLED=1` (env) to poll tracked source files for hash changes and re-extract incrementally. Tune via `AUTO_SYNC_INTERVAL` (s), `AUTO_SYNC_NAMESPACES`, `AUTO_SYNC_TARGETS` (`ns=/path`), `AUTO_SYNC_MAX_FILES`. Watch `docker compose logs backend` for `[auto-sync]` lines. Polls (not inotify) because Windows+Docker bind-mounts don't propagate file events.
