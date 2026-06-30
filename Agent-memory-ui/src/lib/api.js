@@ -727,4 +727,162 @@ export const api = {
       return res.json();
     });
   },
+
+  /**
+   * Trace call path / call chain (BFS)
+   * @param {string} namespace
+   * @param {string} start - Start symbol/node name
+   * @param {string} [direction='outbound'] - 'outbound' (callees) or 'inbound' (callers)
+   * @param {string} [relation='calls'] - Relation type
+   * @param {number} [depth=3] - Traversal depth
+   * @param {number} [limitPerNode=50] - Result limit per node
+   * @returns {Promise<Object>} Traced graph data
+   */
+  traceGraphPath: (namespace, start, direction = 'outbound', relation = 'calls', depth = 3, limitPerNode = 50) =>
+    request('/api/graph/trace', {
+      method: 'POST',
+      body: JSON.stringify({
+        namespace,
+        start,
+        direction,
+        relation,
+        depth,
+        limit_per_node: limitPerNode,
+      }),
+    }),
+
+  /**
+   * Structured search over the codebase graph
+   * @param {string} namespace
+   * @param {Object} filters
+   * @returns {Promise<Object>} Search results
+   */
+  searchGraphStructured: (namespace, filters = {}) =>
+    request('/api/graph/search-structured', {
+      method: 'POST',
+      body: JSON.stringify({
+        namespace,
+        node_type: filters.nodeType || null,
+        source_file_regex: filters.sourceFileRegex || null,
+        name_regex: filters.nameRegex || null,
+        min_degree: filters.minDegree !== undefined ? parseInt(filters.minDegree) : null,
+        max_degree: filters.maxDegree !== undefined ? parseInt(filters.maxDegree) : null,
+        limit: filters.limit || 50,
+        offset: filters.offset || 0,
+      }),
+    }),
+
+  /**
+   * Get architecture overview of the codebase
+   * @param {string} namespace
+   * @param {number} [hotspotTop=20]
+   * @returns {Promise<Object>} Architecture stats
+   */
+  getArchitecture: (namespace, hotspotTop = 20) =>
+    request(`/api/graph/architecture?namespace=${encodeURIComponent(namespace)}&hotspot_top=${hotspotTop}`, {
+      method: 'GET',
+    }),
+
+  /**
+   * Find dead code (0 inbound call functions)
+   * @param {string} namespace
+   * @param {number} [limit=500]
+   * @returns {Promise<Object>} Dead code list
+   */
+  getDeadCode: (namespace, limit = 500) =>
+    request(`/api/graph/dead-code?namespace=${encodeURIComponent(namespace)}&limit=${limit}`, {
+      method: 'GET',
+    }),
+
+  /**
+   * Introspect graph schema
+   * @param {string} [namespace]
+   * @returns {Promise<Object>} Schema details
+   */
+  getGraphSchema: (namespace = null) => {
+    let url = '/api/graph/schema';
+    if (namespace) url += `?namespace=${encodeURIComponent(namespace)}`;
+    return request(url, { method: 'GET' });
+  },
+
+  /**
+   * Get code snippet for a symbol
+   * @param {string} namespace
+   * @param {string} [nodeId]
+   * @param {string} [qualifiedName]
+   * @param {number} [contextLines=6]
+   * @returns {Promise<Object>} Code snippet lines
+   */
+  getCodeSnippet: (namespace, nodeId = null, qualifiedName = null, contextLines = 6) =>
+    request('/api/graph/snippet', {
+      method: 'POST',
+      body: JSON.stringify({
+        namespace,
+        node_id: nodeId,
+        qualified_name: qualifiedName,
+        context_lines: contextLines,
+      }),
+    }),
+
+  /**
+   * Detect blast radius of git modifications
+   * @param {string} namespace
+   * @param {string} [base='HEAD']
+   * @param {boolean} [unified=false]
+   * @returns {Promise<Object>} Changed symbols and blast radius risk
+   */
+  detectChanges: (namespace, base = 'HEAD', unified = false) =>
+    request('/api/graph/changes', {
+      method: 'POST',
+      body: JSON.stringify({
+        namespace,
+        base,
+        unified,
+      }),
+    }),
+
+  /**
+   * Build team-shared artifact and return metadata manifest
+   * @param {string} namespace
+   * @returns {Promise<Object>} Manifest details
+   */
+  getArtifactManifest: (namespace) =>
+    request(`/api/graph/artifact/manifest?namespace=${encodeURIComponent(namespace)}`, {
+      method: 'GET',
+    }),
+
+  /**
+   * Get download URL for team-shared artifact
+   * @param {string} namespace
+   * @returns {string} Download URL
+   */
+  getArtifactDownloadUrl: (namespace) =>
+    `${BASE_URL}/api/graph/artifact?namespace=${encodeURIComponent(namespace)}`,
+
+  /**
+   * Restore namespace from uploaded team artifact file (returns task ID for polling)
+   * @param {File} file - Uploaded file object (.json.gz)
+   * @param {string} [targetNamespace] - Optional. Target namespace to restore to.
+   * @returns {Promise<{task_id: string, namespace: string, message: string}>}
+   */
+  restoreArtifact: (file, targetNamespace = null) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    let url = '/api/graph/artifact/restore';
+    if (targetNamespace) {
+      url += `?target_namespace=${encodeURIComponent(targetNamespace)}`;
+    }
+    
+    return fetch(`${BASE_URL}${url}`, {
+      method: 'POST',
+      body: formData,
+    }).then(async (res) => {
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData?.detail || `HTTP Error: ${res.status}`);
+      }
+      return res.json();
+    });
+  },
 };

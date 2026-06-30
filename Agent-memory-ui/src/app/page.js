@@ -6,6 +6,7 @@ import { api, BASE_URL } from '@/lib/api';
 import GlassCard from '@/components/GlassCard';
 import DigitalAvatar from '@/components/DigitalAvatar';
 import KnowledgeGraph from '@/components/KnowledgeGraph';
+import CodebaseIntel from '@/components/CodebaseIntel';
 import TutorialBook from '@/components/TutorialBook';
 
 export default function SPAHomepage() {
@@ -2787,6 +2788,13 @@ export default function SPAHomepage() {
         {activeTab === 'graph' && (
           <div className="tab-view-content fade-in-view" style={{ width: '100%', height: '100%' }}>
             <KnowledgeGraph />
+          </div>
+        )}
+
+        {/* TAB 7.5: ARCH_INTEL (架构分析) */}
+        {activeTab === 'codebase' && (
+          <div className="tab-view-content fade-in-view" style={{ width: '100%', height: '100%' }}>
+            <CodebaseIntel />
           </div>
         )}
 
