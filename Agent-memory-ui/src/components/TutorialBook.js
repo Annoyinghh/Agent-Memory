@@ -398,10 +398,10 @@ url = "http://192.168.110.109:8901/mcp"`}
         </div>
       </GlassCard>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '250px 1fr', gap: '20px', flexGrow: 1, minHeight: 0 }}>
+      <div className="tutorial-grid" style={{ flexGrow: 1, minHeight: 0 }}>
         {/* 左侧：目录导航 (Sidebar) */}
         <GlassCard title="目录 (TABLE OF CONTENTS)" glowColor="purple" className="op-panel-card" style={{ display: 'flex', flexDirection: 'column' }}>
-          <div className="tutorial-toc-list" style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '10px 5px', overflowY: 'auto' }}>
+          <div className="tutorial-toc-list">
             {PAGES_DATA.map((page) => (
               <button
                 key={page.id}
@@ -441,11 +441,71 @@ url = "http://192.168.110.109:8901/mcp"`}
 
         {/* 右侧：页面内容 (Main Content Area) */}
         <GlassCard title={activePage.title.toUpperCase()} glowColor="cyan" className="op-panel-card" style={{ display: 'flex', flexDirection: 'column' }}>
-          <div className="manual-scroll-area scrollbar-thin" style={{ flexGrow: 1, overflowY: 'auto', padding: '15px 20px', paddingRight: '10px', height: '100%', maxHeight: '530px' }}>
+          <div className="manual-scroll-area scrollbar-thin">
             {activePage.content}
           </div>
         </GlassCard>
       </div>
+
+      <style jsx>{`
+        .tutorial-grid {
+          display: grid;
+          grid-template-columns: 250px 1fr;
+          gap: 20px;
+        }
+
+        .tutorial-toc-list {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          padding: 10px 5px;
+          overflow-y: auto;
+        }
+
+        .manual-scroll-area {
+          flex-grow: 1;
+          overflow-y: auto;
+          padding: 15px 20px;
+          padding-right: 10px;
+          height: 100%;
+          max-height: 530px;
+        }
+
+        @media (max-width: 768px) {
+          .tutorial-grid {
+            grid-template-columns: 1fr;
+            gap: 16px;
+          }
+          
+          .tutorial-toc-list {
+            flex-direction: row !important;
+            overflow-x: auto !important;
+            overflow-y: hidden !important;
+            white-space: nowrap !important;
+            padding-bottom: 8px !important;
+            gap: 10px !important;
+          }
+
+          .toc-item-btn {
+            flex-shrink: 0 !important;
+            padding: 8px 12px !important;
+            font-size: 11px !important;
+            border-left: 3px solid transparent !important;
+            border-bottom: 3px solid transparent !important;
+            text-align: center !important;
+          }
+
+          .toc-item-btn.active {
+            border-left: 3px solid transparent !important;
+            border-bottom: 3px solid #00f2fe !important;
+          }
+
+          .manual-scroll-area {
+            max-height: none !important;
+            padding: 12px 10px !important;
+          }
+        }
+      `}</style>
     </div>
   );
 }

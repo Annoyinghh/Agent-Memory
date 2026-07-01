@@ -629,11 +629,6 @@ class GraphImportResponse(BaseModel):
     edges_imported: int
     id_map_size: int
 
-@app.get("/api/graph/data")
-def get_graph_data(namespace: str = Query(...)):
-    """获取指定命名空间的所有图谱节点与连线数据"""
-    return engine.get_graph_data(namespace)
-
 @app.post("/api/graph/edge", response_model=StatusMessageResponse)
 def add_edge(req: EdgeRequest):
     engine.add_edge(req.from_id, req.to_id, req.relation_type, req.confidence)

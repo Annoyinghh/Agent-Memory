@@ -430,7 +430,7 @@ export default function CodebaseIntel() {
   };
 
   return (
-    <div className="codebase-vis-layout flex flex-col h-full font-sans text-sm relative" style={{ color: 'hsl(var(--text-primary))' }}>
+    <div className="codebase-vis-layout flex flex-col font-sans text-sm relative h-[calc(100vh-var(--header-height)-48px)] min-h-[500px]" style={{ color: 'hsl(var(--text-primary))' }}>
       
       {/* 1. Header with Telemetry Line */}
       <div className="flex justify-between items-center px-6 py-4 border-b border-dashed border-[rgba(255,187,0,0.1)] bg-[rgba(3,2,1,0.9)] z-10 shrink-0">

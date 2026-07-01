@@ -312,3 +312,29 @@ body::after {
   box-shadow: 0 0 8px rgba(255, 187, 0, 0.25);
   transition: width 1s cubic-bezier(0.1, 0.8, 0.2, 1);
 }
+
+/* Responsive Global Utilities to prevent overflow and overlap */
+* {
+  overflow-wrap: break-word;
+}
+
+@media (max-width: 768px) {
+  :root {
+    --header-height: 60px;
+    --sidebar-width: 0px;
+  }
+  
+  .main-content {
+    margin-left: 0 !important;
+    margin-bottom: 60px !important; /* Space for bottom nav if any */
+    padding: 12px !important;
+    padding-top: calc(var(--header-height) + 12px) !important;
+    min-height: calc(100vh - 60px) !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .glass-card {
+    padding: 16px;
+  }
+}

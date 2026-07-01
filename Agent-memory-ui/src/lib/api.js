@@ -688,6 +688,18 @@ export const api = {
     }),
 
   /**
+   * Get graph nodes + edges for the galaxy visualization (degree-prioritized
+   * sample so community hubs are always visible, not just the first-N inserts).
+   * @param {string} namespace
+   * @param {number} [limit=500]
+   * @returns {Promise<{nodes: Array, edges: Array}>}
+   */
+  getGalaxyGraph: (namespace, limit = 500) =>
+    request(`/api/graph/data?namespace=${encodeURIComponent(namespace)}&limit=${limit}`, {
+      method: 'GET',
+    }),
+
+  /**
    * Exact line-level search over source files referenced by imported graph nodes
    * @param {string} namespace
    * @param {string} query
