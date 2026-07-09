@@ -132,23 +132,26 @@ export default function KnowledgeGraph() {
     }
     
     const fov = 50 * (Math.PI / 180);
-    const dist = Math.max(15, maxRadius / Math.tan(fov / 2)) * 1.5;
+    // Use a larger multiplier (2.8 instead of 1.5) so the graph comfortably fits in the view without manual zooming
+    let aspect = cameraRef.current ? cameraRef.current.aspect : 1.5;
+    if (isNaN(aspect) || aspect <= 0) {
+      aspect = 1.5;
+    }
+    const dist = Math.max(15, maxRadius / Math.tan(fov / 2)) * (aspect < 1 ? 3.5 : 2.8);
     
-    if (controlsRef.current) {
-      controlsRef.current.enableDamping = false;
+    // Use a slightly higher elevation angle (approx 45 degrees) for a better overview
+    const camY = dist * 0.707;
+    const camZ = dist * 0.707; 
+    
+    if (cameraRef.current && controlsRef.current) {
+      // Forcefully jump the camera to the correct framing position
+      cameraRef.current.position.set(0, camY, camZ);
       controlsRef.current.target.set(0, 0, 0);
       controlsRef.current.update();
-      controlsRef.current.enableDamping = true;
     }
-    if (cameraRef.current) {
-      cameraRef.current.position.set(0, distance * 0.5, distance);
-    }
+    
     targetLookAtRef.current.set(0, 0, 0);
-    if (!targetCamPosRef.current) {
-      targetCamPosRef.current = new THREE.Vector3();
-    }
-    targetCamPosRef.current.set(0, 0, distance);
-    isCameraLerpingRef.current = true;
+    isCameraLerpingRef.current = false; // Disable lerp on initial mount to avoid OrbitControls fighting
   };
 
   // Fetch Graph Data
@@ -505,8 +508,8 @@ export default function KnowledgeGraph() {
     if (!container) return;
 
     // 1. Initialize Scene & Camera
-    const width = container.clientWidth;
-    const height = container.clientHeight;
+    const width = container.clientWidth || 800;
+    const height = container.clientHeight || 600;
     
     const scene = new THREE.Scene();
     sceneRef.current = scene;
@@ -539,8 +542,24 @@ export default function KnowledgeGraph() {
 
     controlsRef.current = controls;
 
+    // Handle Resize
+    const handleResize = () => {
+      if (!container || !camera || !renderer) return;
+      const newWidth = container.clientWidth;
+      const newHeight = container.clientHeight;
+      if (newWidth === 0 || newHeight === 0) return;
+      
+      camera.aspect = newWidth / newHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(newWidth, newHeight);
+    };
+    
+    window.addEventListener('resize', handleResize);
+
     try {
       setTimeout(() => {
+        handleResize(); // Force a resize check after a short delay to fix any initial mount 0-size issues
+        
         const parentElement = container?.parentElement;
         const canvases = document.querySelectorAll('canvas');
         const canvasInfo = Array.from(canvases).map(c => ({
@@ -2036,7 +2055,8 @@ export default function KnowledgeGraph() {
         .galaxy-vis-layout {
           position: relative;
           width: 100%;
-          height: 100%;
+          height: calc(100vh - var(--header-height) - 48px);
+          min-height: 500px;
           overflow: hidden;
         }
 

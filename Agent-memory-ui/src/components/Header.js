@@ -33,7 +33,9 @@ export default function Header() {
   return (
     <header className="header-container">
       <div className="title-section">
-        <h1>{getPageTitle()}</h1>
+        <h1>
+          <span className="tech-decor">//</span> <span className="title-text-gradient">{getPageTitle()}</span>
+        </h1>
       </div>
 
       <div className="action-section">
@@ -86,25 +88,41 @@ export default function Header() {
           left: 68px;
           right: 0;
           height: var(--header-height);
-          background: rgba(5, 4, 3, 0.35);
-          backdrop-filter: blur(12px);
-          -webkit-backdrop-filter: blur(12px);
-          border-bottom: 1px solid rgba(255, 187, 0, 0.08);
+          background: rgba(5, 4, 3, 0.55);
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          border-bottom: 1px solid rgba(255, 187, 0, 0.12);
           display: flex;
           align-items: center;
           justify-content: space-between;
           padding: 0 30px;
-          padding-left: 50px;
           z-index: 90;
           pointer-events: auto;
         }
 
         .title-section h1 {
+          font-family: var(--font-mono);
           font-size: 20px;
           font-weight: 600;
-          background: linear-gradient(90deg, hsl(var(--text-primary)), hsl(var(--text-muted)));
+          letter-spacing: 1px;
+          text-transform: uppercase;
+          margin: 0;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .title-text-gradient {
+          background: linear-gradient(90deg, #00f2fe, #ffbb00);
           -webkit-background-clip: text;
           -webkit-text-fill-color: transparent;
+          text-shadow: 0 0 10px rgba(0, 242, 254, 0.15);
+        }
+
+        .title-section .tech-decor {
+          color: hsl(var(--color-cyan));
+          font-weight: bold;
+          text-shadow: 0 0 8px hsl(var(--color-cyan) / 0.5);
         }
 
         .selector-wrapper {
@@ -176,6 +194,30 @@ export default function Header() {
         .simplify-toggle.full {
           border-color: rgba(255, 187, 0, 0.3);
           color: hsl(var(--color-cyan));
+        }
+
+        @media (max-width: 1024px) {
+          .header-container {
+            padding: 0 20px;
+          }
+        }
+
+        @media (max-width: 768px) {
+          .header-container {
+            left: 0;
+            padding: 0 16px;
+            height: 60px;
+          }
+          .title-section h1 {
+            font-size: 15px;
+          }
+          .selector-wrapper label {
+            display: none;
+          }
+          .namespace-select {
+            padding: 6px 12px;
+            font-size: 12px;
+          }
         }
       `}</style>
     </header>

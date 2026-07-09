@@ -86,6 +86,18 @@ export default function Sidebar() {
       )
     },
     { 
+      label: '架构分析 // ARCH_INTEL', 
+      value: 'codebase',
+      icon: (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="2" y="3" width="20" height="7" rx="1" />
+          <rect x="2" y="14" width="20" height="7" rx="1" />
+          <line x1="6" y1="10" x2="6" y2="14" />
+          <line x1="18" y1="10" x2="18" y2="14" />
+        </svg>
+      )
+    },
+    { 
       label: '会话管理 // SESSIONS', 
       value: 'sessions',
       tooltip: '会话管理：创建/管理会话、关联/解除记忆、恢复会话上下文',
@@ -590,6 +602,76 @@ export default function Sidebar() {
         .cyber-speaker-btn.active:hover {
           background: rgba(0, 242, 254, 0.08);
           box-shadow: 0 0 15px rgba(0, 242, 254, 0.15);
+        }
+
+        @media (max-width: 768px) {
+          .cyber-sidebar {
+            width: 100% !important;
+            height: 56px !important;
+            top: auto !important;
+            bottom: 0 !important;
+            left: 0 !important;
+            flex-direction: row !important;
+            border-right: none !important;
+            border-top: 1px solid rgba(255, 187, 0, 0.12);
+            box-shadow: 0 -5px 20px rgba(0, 0, 0, 0.95);
+            opacity: 1.0 !important;
+            overflow: visible !important;
+          }
+          
+          .cyber-sidebar:hover {
+            width: 100% !important;
+            opacity: 1.0 !important;
+          }
+
+          .sidebar-decor-line {
+            display: none !important;
+          }
+
+          .sidebar-header {
+            display: none !important;
+          }
+
+          .cyber-nav {
+            flex-direction: row !important;
+            justify-content: space-around !important;
+            width: 100% !important;
+            height: 100% !important;
+            align-items: center !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+
+          .cyber-nav-link {
+            width: auto !important;
+            padding: 8px 12px !important;
+            flex: 1 !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 2px !important;
+            height: 100% !important;
+          }
+
+          .nav-label-wrapper {
+            display: none !important;
+          }
+
+          .sidebar-diagnostic {
+            display: none !important;
+          }
+
+          .active-dot {
+            position: absolute !important;
+            bottom: 4px !important;
+            left: 50% !important;
+            transform: translateX(-50%) !important;
+            width: 4px !important;
+            height: 4px !important;
+            right: auto !important;
+            top: auto !important;
+          }
         }
       `}</style>
     </aside>

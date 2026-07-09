@@ -8,7 +8,7 @@
 FROM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json ./
-RUN npm config set registry https://registry.npmmirror.com && npm install
+RUN npm install --registry=https://registry.npmmirror.com
 
 # --- builder: compile the standalone server bundle ---
 FROM node:22-alpine AS builder

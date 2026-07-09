@@ -5,7 +5,8 @@ import { useApp } from '@/context/AppContext';
 import { api, BASE_URL } from '@/lib/api';
 import GlassCard from '@/components/GlassCard';
 import DigitalAvatar from '@/components/DigitalAvatar';
-import KnowledgeGraph from '@/components/KnowledgeGraph';
+import GalaxyView from '@/components/GalaxyView';
+import CodebaseIntel from '@/components/CodebaseIntel';
 import TutorialBook from '@/components/TutorialBook';
 import SimplifiedLayout from '@/components/SimplifiedLayout';
 
@@ -1014,7 +1015,13 @@ export default function SPAHomepage() {
           
           {/* TAB 1: DASHBOARD (STATISTICS) */}
           {activeTab === 'dashboard' && (
-            <div className="tab-view-content fade-in-view">
+            <div className="tab-view-content fade-in-view" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div className="quick-help-banner font-mono">
+                <span className="icon">📊</span>
+                <div className="help-text">
+                  <strong>数据中心看板</strong>：监控本地系统的运行状态及命名空间。命名空间是记忆的“抽屉”，相互隔离。点击下方分区的<strong>“MOUNT_SECTOR_LOAD →”</strong>可快速挂载并跳转检索。
+                </div>
+              </div>
               <GlassCard title="内存容量分布占比 (Storage Distribution)" glowColor="purple" className="op-panel-card">
                 {namespacesList.length === 0 ? (
                   <div className="empty-sci-chart font-mono">[ WAITING_FOR_SYNC_DATA ]</div>
@@ -1196,7 +1203,16 @@ export default function SPAHomepage() {
 
           {/* TAB 2: SEARCH (QUERY ENGINE) */}
           {activeTab === 'search' && (
-            <div className="tab-view-content fade-in-view">
+            <div className="tab-view-content fade-in-view" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div className="quick-help-banner font-mono">
+                <span className="icon">🔍</span>
+                <div className="help-text">
+                  {searchSubMode === 'search' && <span><strong>混合检索</strong>：通过语义向量和精确关键字的混合算法，在底层记忆库中检索最相关的知识，支持直接编辑或删除底层节点。</span>}
+                  {searchSubMode === 'pack' && <span><strong>上下文打包</strong>：模拟 AI 的上下文填充。在指定的 Token 预算内，自动打包最相关的知识，支持 headroom 语义压缩以塞入更多上下文。</span>}
+                  {searchSubMode === 'source' && <span><strong>源码检索</strong>：对关联的代码仓库进行精准检索，直接定位函数、类定义并显示前后行号的源码片段。</span>}
+                  {searchSubMode === 'compress' && <span><strong>语义压缩工具</strong>：对任意结构化文本或日志进行高比率的语义压缩（保留解压 Key，支持零损反向还原原文）。</span>}
+                </div>
+              </div>
               
               {/* Sub-mode Toggles */}
               <div className="sub-mode-toggle-bar font-mono">
@@ -1965,26 +1981,14 @@ export default function SPAHomepage() {
           )}
 
           {activeTab === 'ingest' && (
-            <div className="tab-view-content fade-in-view ingest-tab-layout">
-              {/* 💡 新手引导 — 数据注入说明 */}
-              <div style={{
-                padding: '12px 16px',
-                marginBottom: '16px',
-                background: 'linear-gradient(135deg, rgba(0,242,254,0.05) 0%, rgba(138,43,226,0.03) 100%)',
-                border: '1px solid rgba(0,242,254,0.12)',
-                borderRadius: '8px',
-                fontSize: '12px',
-                color: 'hsl(var(--text-muted))',
-                lineHeight: '1.8',
-                fontFamily: 'var(--font-mono)',
-                width: '100%'
-              }}>
-                <div style={{ fontWeight: 'bold', color: 'hsl(var(--color-cyan))', marginBottom: '4px' }}>💡 数据注入 · 两种方式</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                  <span>📝 <strong>手动注入</strong>（左侧）— 将知识文本插入指定命名空间，支持语义去重阈值调节</span>
-                  <span>📸 <strong>认知快照</strong>（右侧）— 冻结当前项目关键状态摘要，用于对话切换时恢复上下文</span>
+            <div className="tab-view-content fade-in-view" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div className="quick-help-banner font-mono">
+                <span className="icon">📝</span>
+                <div className="help-text">
+                  <strong>数据注入与快照</strong>：向选定的命名空间导入外部记忆文本或代码资产（去重阈值大于 0 可防止重复导入相同知识）；快照冻结可将当前的认知数据固化，防止未来被遗忘机制清除。
                 </div>
               </div>
+              <div className="ingest-tab-layout">
               {/* Form 1: Memory Ingestion */}
               <div className="ingest-column">
                 <GlassCard title="手动知识注入 (Insert)" glowColor="cyan" className="op-panel-card">
@@ -2154,11 +2158,18 @@ export default function SPAHomepage() {
               </GlassCard>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
         {/* TAB 4: MEMORY_LAYERS (分层记忆) */}
         {activeTab === 'memory' && (
-          <div className="tab-view-content fade-in-view memory-tab-layout">
+          <div className="tab-view-content fade-in-view memory-tab-layout" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div className="quick-help-banner font-mono">
+              <span className="icon">🧠</span>
+              <div className="help-text">
+                <strong>分层记忆管理</strong>：管理 Agent 的短期内存和工作记忆（Working Memory）。短期记忆记录最近的交互轮次，可随时一键整合提炼（Consolidate）进长期记忆。
+              </div>
+            </div>
             {activeNamespace === 'all' ? (
               <div style={{ display: 'flex', justifyContent: 'center', padding: '40px', width: '100%' }}>
                 <GlassCard title="系统提示 // SYSTEM NOTICE" glowColor="purple" className="op-panel-card" style={{ maxWidth: '600px', width: '100%' }}>
@@ -2426,25 +2437,11 @@ export default function SPAHomepage() {
 
         {/* TAB 5: SESSIONS (会话管理) */}
         {activeTab === 'sessions' && (
-          <div className="tab-view-content fade-in-view ingest-tab-layout">
-            {/* 💡 新手引导 — 会话管理说明 */}
-            <div style={{
-              padding: '12px 16px',
-              marginBottom: '16px',
-              background: 'linear-gradient(135deg, rgba(0,242,254,0.05) 0%, rgba(138,43,226,0.03) 100%)',
-              border: '1px solid rgba(0,242,254,0.12)',
-              borderRadius: '8px',
-              fontSize: '12px',
-              color: 'hsl(var(--text-muted))',
-              lineHeight: '1.8',
-              fontFamily: 'var(--font-mono)',
-              width: '100%'
-            }}>
-              <div style={{ fontWeight: 'bold', color: 'hsl(var(--color-cyan))', marginBottom: '4px' }}>💡 会话管理 · 记忆与对话关联</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                <span>📌 <strong>会话</strong> — 记录对话历史，每个会话可关联多条记忆，支持状态流转（活跃→归档→关闭）</span>
-                <span>🔗 <strong>关联记忆</strong> — 将已有记忆绑定到会话，方便按会话维度检索上下文</span>
-                <span>🔄 <strong>恢复上下文</strong> — 提取会话关联的所有记忆，打包为一段完整 Prompt 供 AI 使用</span>
+          <div className="tab-view-content fade-in-view" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div className="quick-help-banner font-mono">
+              <span className="icon">💬</span>
+              <div className="help-text">
+                <strong>全息会话隔离</strong>：创建和管理独立的 Agent 交互会话。你可以在<strong>“知识检索”</strong>中将相关记忆一键关联（Link）到当前会话，确保 AI 在该会话内持续使用对应上下文。
               </div>
             </div>
             {activeNamespace === 'all' ? (
@@ -2462,7 +2459,7 @@ export default function SPAHomepage() {
                 </GlassCard>
               </div>
             ) : (
-              <>
+              <div className="ingest-tab-layout">
                 <div className="ingest-column">
                   <GlassCard title="创建会话 (Create Session)" glowColor="cyan" className="op-panel-card">
                     <form onSubmit={handleCreateSession} className="sci-form">
@@ -2617,32 +2614,18 @@ export default function SPAHomepage() {
                     </GlassCard>
                   )}
                 </div>
-              </>
+              </div>
             )}
           </div>
         )}
 
         {/* TAB 6: DECAY / FORGET (遗忘衰减) */}
         {activeTab === 'decay' && (
-          <div className="tab-view-content fade-in-view ingest-tab-layout">
-            {/* 💡 新手引导 — 遗忘衰减说明 */}
-            <div style={{
-              padding: '12px 16px',
-              marginBottom: '16px',
-              background: 'linear-gradient(135deg, rgba(0,242,254,0.05) 0%, rgba(138,43,226,0.03) 100%)',
-              border: '1px solid rgba(0,242,254,0.12)',
-              borderRadius: '8px',
-              fontSize: '12px',
-              color: 'hsl(var(--text-muted))',
-              lineHeight: '1.8',
-              fontFamily: 'var(--font-mono)',
-              width: '100%'
-            }}>
-              <div style={{ fontWeight: 'bold', color: 'hsl(var(--color-cyan))', marginBottom: '4px' }}>💡 遗忘衰减 · 记忆生命周期管理</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                <span>🧹 <strong>主动遗忘</strong> — 设置容量上限，自动淘汰低分记忆，为重要内容腾出空间</span>
-                <span>🔒 <strong>命名空间保护</strong> — 将命名空间设为只读，防止重要数据被写入或删除</span>
-                <span>💾 <strong>备份与恢复</strong> — 导出 .json.gz 备份文件，或从备份完整恢复命名空间</span>
+          <div className="tab-view-content fade-in-view" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div className="quick-help-banner font-mono">
+              <span className="icon">⏳</span>
+              <div className="help-text">
+                <strong>遗忘衰减控制</strong>：配置命名空间的记忆存活周期。低频被检索的记忆会随时间逐渐衰减重要性分值；当记忆库超载时，可触发主动遗忘以释放底层向量存储空间。
               </div>
             </div>
             {activeNamespace === 'all' ? (
@@ -2660,7 +2643,7 @@ export default function SPAHomepage() {
                 </GlassCard>
               </div>
             ) : (
-              <>
+              <div className="ingest-tab-layout">
                 <div className="ingest-column">
                   <GlassCard title="主动遗忘 (Active Forgetting)" glowColor="cyan" className="op-panel-card">
                     <div style={{ padding: '10px 0', fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'hsl(var(--text-muted))', lineHeight: '1.6', borderBottom: '1px dashed rgba(0,242,254,0.15)', marginBottom: '14px' }}>
@@ -2869,7 +2852,7 @@ export default function SPAHomepage() {
                     </form>
                   </GlassCard>
                 </div>
-              </>
+              </div>
             )}
           </div>
         )}
@@ -2877,7 +2860,14 @@ export default function SPAHomepage() {
         {/* TAB 7: KNOWLEDGE_GALAXY (星系图谱) */}
         {activeTab === 'graph' && (
           <div className="tab-view-content fade-in-view" style={{ width: '100%', height: '100%' }}>
-            <KnowledgeGraph />
+            <GalaxyView />
+          </div>
+        )}
+
+        {/* TAB 7.5: ARCH_INTEL (架构分析) */}
+        {activeTab === 'codebase' && (
+          <div className="tab-view-content fade-in-view" style={{ width: '100%', height: '100%' }}>
+            <CodebaseIntel />
           </div>
         )}
 
@@ -3687,6 +3677,7 @@ export default function SPAHomepage() {
 
         .sub-mode-toggle-bar {
           display: flex;
+          flex-wrap: wrap;
           gap: 12px;
           margin-bottom: 16px;
           border-bottom: 1px solid rgba(255, 187, 0, 0.08);
@@ -3967,26 +3958,154 @@ export default function SPAHomepage() {
           box-shadow: 0 0 8px rgba(255, 102, 0, 0.25);
         }
 
+        /* Onboarding Quick Help Banner */
+        .quick-help-banner {
+          display: flex;
+          align-items: flex-start;
+          gap: 12px;
+          background: rgba(255, 187, 0, 0.03);
+          border: 1px solid rgba(255, 187, 0, 0.12);
+          border-left: 3px solid #00f2fe;
+          border-radius: 6px;
+          padding: 12px 16px;
+          margin-bottom: 8px;
+          font-size: 12px;
+          line-height: 1.5;
+          color: hsl(var(--text-muted));
+          flex-shrink: 0;
+        }
+
+        .quick-help-banner .icon {
+          font-size: 16px;
+          line-height: 1;
+        }
+
+        .quick-help-banner strong {
+          color: hsl(var(--text-primary));
+        }
+
+
+
         @media (max-width: 1024px) {
-          .cockpit-layout-grid {
+          /* Apply vertical stacking ONLY to text/form tabs (dashboard, search, ingest, memory, sessions, decay, tutorial) */
+          .cockpit-layout-grid:not(.active-tab-graph):not(.active-tab-codebase) {
             position: relative;
             display: flex;
             flex-direction: column;
             height: auto;
           }
-          .system-left-panel, .avatar-center-panel, .operations-right-panel {
+          .cockpit-layout-grid:not(.active-tab-graph):not(.active-tab-codebase) .system-left-panel,
+          .cockpit-layout-grid:not(.active-tab-graph):not(.active-tab-codebase) .operations-right-panel {
             position: relative;
             left: 0 !important;
             width: 100% !important;
             height: auto !important;
           }
-          .operations-right-panel {
+          .cockpit-layout-grid:not(.active-tab-graph):not(.active-tab-codebase) .avatar-center-panel {
+            position: relative;
+            left: 0 !important;
+            width: 100% !important;
+            height: 350px !important; /* Fixed height to prevent collapse in flex-col */
+            display: flex !important; /* Force display if hidden by other queries */
+          }
+          .cockpit-layout-grid:not(.active-tab-graph):not(.active-tab-codebase) .operations-right-panel {
             position: relative;
             top: 0;
             height: auto;
           }
+
+          /* Keep full screen viewport and overlay avatar in 3D visualization tabs (graph, codebase) */
+          .cockpit-layout-grid.active-tab-graph,
+          .cockpit-layout-grid.active-tab-codebase {
+            position: relative;
+            height: calc(100vh - var(--header-height) - 60px);
+            width: 100%;
+          }
+          .cockpit-layout-grid.active-tab-graph .avatar-center-panel,
+          .cockpit-layout-grid.active-tab-codebase .avatar-center-panel {
+            position: absolute !important;
+            left: 20px !important;
+            bottom: 20px !important;
+            top: auto !important;
+            width: 38px !important;
+            height: 38px !important;
+            display: flex !important;
+            z-index: 100 !important;
+            border-radius: 50% !important;
+          }
+          .cockpit-layout-grid.active-tab-graph .avatar-center-panel.graph-avatar-expanded {
+            width: 75px !important;
+            height: 75px !important;
+            border-radius: 8px !important;
+          }
+          .cockpit-layout-grid.active-tab-graph .operations-right-panel,
+          .cockpit-layout-grid.active-tab-codebase .operations-right-panel {
+            position: absolute !important;
+            left: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            pointer-events: none !important;
+          }
+          /* Allow pointer events inside the control console popups */
+          .cockpit-layout-grid.active-tab-graph .operations-right-panel *,
+          .cockpit-layout-grid.active-tab-codebase .operations-right-panel * {
+            pointer-events: auto;
+          }
+
           .hologram-overlay-wing {
             display: none;
+          }
+        }
+
+        @media (max-width: 768px) {
+          .cockpit-layout-grid.active-tab-dashboard {
+            grid-template-columns: 1fr !important;
+            gap: 20px !important;
+          }
+        }
+
+        @media (max-width: 992px) {
+          .search-tab-layout {
+            grid-template-columns: 1fr !important;
+            gap: 16px !important;
+          }
+          .search-left-form {
+            position: static !important;
+          }
+          .ingest-tab-layout {
+            grid-template-columns: 1fr !important;
+            gap: 20px !important;
+          }
+          .memory-grid-container {
+            grid-template-columns: 1fr !important;
+            gap: 20px !important;
+          }
+          .working-table-header {
+            display: none !important;
+          }
+          .working-table-row {
+            grid-template-columns: 1fr !important;
+            gap: 8px !important;
+            padding: 12px !important;
+            height: auto !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: flex-start !important;
+          }
+          .wm-row-key {
+            font-size: 12px !important;
+            color: hsl(var(--color-cyan)) !important;
+            white-space: normal !important;
+          }
+          .wm-row-val {
+            font-size: 11px !important;
+            white-space: normal !important;
+            margin: 4px 0 !important;
+          }
+          .wm-row-actions {
+            width: 100% !important;
+            justify-content: flex-start !important;
+            margin-top: 6px !important;
           }
         }
 

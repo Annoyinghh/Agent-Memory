@@ -404,3 +404,29 @@ body.simplified-mode .sd-packed {
   white-space: pre-wrap;
   color: #c0c0c8;
 }
+
+/* Responsive Global Utilities to prevent overflow and overlap */
+* {
+  overflow-wrap: break-word;
+}
+
+@media (max-width: 768px) {
+  :root {
+    --header-height: 60px;
+    --sidebar-width: 0px;
+  }
+
+  .main-content {
+    margin-left: 0 !important;
+    margin-bottom: 60px !important; /* Space for bottom nav if any */
+    padding: 12px !important;
+    padding-top: calc(var(--header-height) + 12px) !important;
+    min-height: calc(100vh - 60px) !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .glass-card {
+    padding: 16px;
+  }
+}

@@ -16,6 +16,12 @@ try:
 except Exception:  # pragma: no cover - optional module
     _compress_text = None
 
+# CBM-style structural query methods (trace_path, search_graph, get_architecture,
+# dead_code, get_graph_schema, get_code_snippet, detect_changes). Mixed in so
+# they share self.lock/cursor/conn. code_query defines its own _db_lock to avoid
+# a circular import (we import it here at class-definition time).
+from code_query import CodeQueryMixin
+
 def db_lock(func):
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
@@ -94,7 +100,7 @@ class MemoryItem(BaseModel):
     timestamp: int
     score: float = 1.0
 
-class MemoryEngine:
+class MemoryEngine(CodeQueryMixin):
     # Anchor default data dir to THIS file's location so every entry point
     # (REST API, MCP server, CLI) reads/writes the SAME database regardless of cwd.
     _DEFAULT_DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -110,7 +116,10 @@ class MemoryEngine:
 
         # 1. Initialize SQLite (FTS5 + Metadata)
         self.sqlite_path = os.path.join(db_dir, "agent_memory.db")
-        self.conn = sqlite3.connect(self.sqlite_path, check_same_thread=False)
+        # timeout=30: the backend (incl. the auto-sync watcher) and the mcp
+        # container both write this file; give cross-process writers room to
+        # retry on "database is locked" instead of failing fast.
+        self.conn = sqlite3.connect(self.sqlite_path, check_same_thread=False, timeout=30)
         self.cursor = self.conn.cursor()
         # WAL mode gives much better concurrent-read throughput (the backend
         # and MCP containers share this DB file) and pairs safely with

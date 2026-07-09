@@ -206,7 +206,7 @@ export default function TutorialBook() {
             </p>
 
             <div className="sub-mode-toggle-bar" style={{ marginBottom: '10px', borderBottom: 'none' }}>
-              {['claude', 'codex', 'gemini', 'antigravity'].map((tab) => (
+              {['claude', 'codex', 'gemini', 'antigravity', 'reasonix'].map((tab) => (
                 <button
                   key={tab}
                   type="button"
@@ -218,6 +218,7 @@ export default function TutorialBook() {
                   {tab === 'codex' && 'Codex'}
                   {tab === 'gemini' && 'Gemini CLI'}
                   {tab === 'antigravity' && 'Antigravity'}
+                  {tab === 'reasonix' && 'Reasonix'}
                 </button>
               ))}
             </div>
@@ -252,6 +253,17 @@ export default function TutorialBook() {
                   <div style={{ marginBottom: '6px' }}><strong>MCP 注册命令:</strong> (与 Gemini CLI 格式相同)</div>
                   <pre style={{ background: 'rgba(0,0,0,0.5)', padding: '6px', borderRadius: '4px', overflowX: 'auto', border: '1px solid rgba(255,255,255,0.05)', color: '#fff', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                     gemini mcp add agent-memory docker run -i --rm -v &lt;DATA&gt;:/app/data agent-memory-server python server.py
+                  </pre>
+                </>
+              )}
+              {mcpClientTab === 'reasonix' && (
+                <>
+                  <div style={{ marginBottom: '6px' }}><strong>reasonix.toml [[plugins]]（或项目根 .mcp.json）:</strong></div>
+                  <pre style={{ background: 'rgba(0,0,0,0.5)', padding: '6px', borderRadius: '4px', overflowX: 'auto', border: '1px solid rgba(255,255,255,0.05)', color: '#fff', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+{`[[plugins]]
+name = "agent-memory"
+command = "docker"
+args = ["run", "-i", "--rm", "-v", "<DATA>:/app/data", "-e", "PYTHONIOENCODING=utf-8", "agent-memory-server", "python", "server.py"]`}
                   </pre>
                 </>
               )}
@@ -300,9 +312,71 @@ export default function TutorialBook() {
                   </pre>
                 </>
               )}
+              {mcpClientTab === 'reasonix' && (
+                <>
+                  <div style={{ marginBottom: '6px' }}><strong>Reasonix 接入（reasonix.toml, HTTP transport）:</strong></div>
+                  <pre style={{ background: 'rgba(0,0,0,0.5)', padding: '6px', borderRadius: '4px', overflowX: 'auto', border: '1px solid rgba(255,255,255,0.05)', color: '#fff', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+{`[[plugins]]
+name = "agent-memory"
+type = "http"
+url = "http://192.168.110.109:8901/mcp"`}
+                  </pre>
+                </>
+              )}
             </div>
             <div className="sci-note-text" style={{ marginTop: '4px' }}>
               ⚠️ 默认无鉴权，仅在可信内网用；本机 stdio MCP 与该 HTTP 服务共存、不冲突（读写同一库，已实测并发正常）。
+            </div>
+          </div>
+        </div>
+      )
+    },
+    {
+      id: 'codebase',
+      title: '7. 架构智能分析 (Codebase Intel)',
+      content: (
+        <div className="font-mono" style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '4px' }}>
+          <p style={{ marginBottom: '4px' }}><strong>系统支持对已提取图谱的代码库进行深度结构分析与级联关系追踪：</strong></p>
+          <div className="workflow-link-item">
+            <span className="bullet">🏛️</span>
+            <div className="wf-body">
+              <span className="title text-white">架构总览 (Architecture Overview)</span>
+              <span className="desc">全局诊断：统计代码文件、开发语言分布，找出图谱拓扑热点符号（Degree 最高）和入口节点。</span>
+            </div>
+          </div>
+          <div className="workflow-link-item">
+            <span className="bullet">🔍</span>
+            <div className="wf-body">
+              <span className="title text-white">结构化搜索 (Structured Search)</span>
+              <span className="desc">精准过滤：按类、函数、方法、路径正则及连接度范围进行条件组合检索，支持在抽屉中解压查看行号源码。</span>
+            </div>
+          </div>
+          <div className="workflow-link-item">
+            <span className="bullet">🔗</span>
+            <div className="wf-body">
+              <span className="title text-white">调用链路追踪 (Call Trace Tree)</span>
+              <span className="desc">拓扑深度追踪：输入任意符号，沿 <code className="text-cyan">calls</code> 边绘制其 Outbound (它调用的) 或 Inbound (谁在调用它) 级联树，可点击任一节点进行重定向追踪。</span>
+            </div>
+          </div>
+          <div className="workflow-link-item">
+            <span className="bullet">💀</span>
+            <div className="wf-body">
+              <span className="title text-white">冗余代码扫描 (Dead Code Scanner)</span>
+              <span className="desc">清扫垃圾：自动提取入度为 0（即没有被任何函数调用）的冗余函数与方法，辅助系统重构与死代码清理。</span>
+            </div>
+          </div>
+          <div className="workflow-link-item">
+            <span className="bullet">⚡</span>
+            <div className="wf-body">
+              <span className="title text-white">变更影响风险评估 (Git Diff Risk)</span>
+              <span className="desc">评估爆破半径：输入 Git 比较基准版本（如 HEAD），系统识别修改的符号并追溯 2 层依赖级联爆破范围，计算变更风险等级（HIGH / MEDIUM / LOW）。</span>
+            </div>
+          </div>
+          <div className="workflow-link-item">
+            <span className="bullet">📦</span>
+            <div className="wf-body">
+              <span className="title text-white">团队工件同步 (Team Graph Sync)</span>
+              <span className="desc">一键离线分发：支持将 namespace 导出的压缩备份（MD5 校验）下载为 `.json.gz` 文件，队友可直接上传载入覆盖（免去队友重复扫描向量化时间，支持 SSE 进度条）。</span>
             </div>
           </div>
         </div>
@@ -324,10 +398,10 @@ export default function TutorialBook() {
         </div>
       </GlassCard>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '250px 1fr', gap: '20px', flexGrow: 1, minHeight: 0 }}>
+      <div className="tutorial-grid" style={{ flexGrow: 1, minHeight: 0 }}>
         {/* 左侧：目录导航 (Sidebar) */}
         <GlassCard title="目录 (TABLE OF CONTENTS)" glowColor="purple" className="op-panel-card" style={{ display: 'flex', flexDirection: 'column' }}>
-          <div className="tutorial-toc-list" style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '10px 5px', overflowY: 'auto' }}>
+          <div className="tutorial-toc-list">
             {PAGES_DATA.map((page) => (
               <button
                 key={page.id}
@@ -367,11 +441,71 @@ export default function TutorialBook() {
 
         {/* 右侧：页面内容 (Main Content Area) */}
         <GlassCard title={activePage.title.toUpperCase()} glowColor="cyan" className="op-panel-card" style={{ display: 'flex', flexDirection: 'column' }}>
-          <div className="manual-scroll-area scrollbar-thin" style={{ flexGrow: 1, overflowY: 'auto', padding: '15px 20px', paddingRight: '10px', height: '100%', maxHeight: '530px' }}>
+          <div className="manual-scroll-area scrollbar-thin">
             {activePage.content}
           </div>
         </GlassCard>
       </div>
+
+      <style jsx>{`
+        .tutorial-grid {
+          display: grid;
+          grid-template-columns: 250px 1fr;
+          gap: 20px;
+        }
+
+        .tutorial-toc-list {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          padding: 10px 5px;
+          overflow-y: auto;
+        }
+
+        .manual-scroll-area {
+          flex-grow: 1;
+          overflow-y: auto;
+          padding: 15px 20px;
+          padding-right: 10px;
+          height: 100%;
+          max-height: 530px;
+        }
+
+        @media (max-width: 768px) {
+          .tutorial-grid {
+            grid-template-columns: 1fr;
+            gap: 16px;
+          }
+          
+          .tutorial-toc-list {
+            flex-direction: row !important;
+            overflow-x: auto !important;
+            overflow-y: hidden !important;
+            white-space: nowrap !important;
+            padding-bottom: 8px !important;
+            gap: 10px !important;
+          }
+
+          .toc-item-btn {
+            flex-shrink: 0 !important;
+            padding: 8px 12px !important;
+            font-size: 11px !important;
+            border-left: 3px solid transparent !important;
+            border-bottom: 3px solid transparent !important;
+            text-align: center !important;
+          }
+
+          .toc-item-btn.active {
+            border-left: 3px solid transparent !important;
+            border-bottom: 3px solid #00f2fe !important;
+          }
+
+          .manual-scroll-area {
+            max-height: none !important;
+            padding: 12px 10px !important;
+          }
+        }
+      `}</style>
     </div>
   );
 }

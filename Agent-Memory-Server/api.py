@@ -43,7 +43,7 @@ engine: MemoryEngine = None
 async def lifespan(app_instance):
     global engine
     engine = MemoryEngine(db_dir=os.environ.get("MEMORY_DB_DIR", "./data"))
-    
+
     # Load protected namespaces from env (comma-separated)
     protected = os.environ.get("PROTECTED_NAMESPACES", "")
     for ns in protected.split(","):
@@ -51,8 +51,24 @@ async def lifespan(app_instance):
         if ns:
             engine.protect_namespace(ns)
             print(f"Namespace '{ns}' is protected (read-only)", file=sys.stderr)
-            
+
+    # Optional auto-sync watcher (backend container only; off by default).
+    watcher = None
+    try:
+        from watcher import AutoSyncWatcher
+        watcher = AutoSyncWatcher.from_env(engine)
+        if watcher:
+            watcher.start()
+    except Exception as e:  # never block startup on the watcher
+        print(f"[lifespan] auto-sync watcher not started: {e!r}", file=sys.stderr)
+
     yield
+
+    if watcher:
+        try:
+            watcher.stop()
+        except Exception:
+            pass
 
 app = FastAPI(title="Agent Memory Server API", version="1.0.0", lifespan=lifespan)
 
@@ -656,11 +672,6 @@ class GraphImportResponse(BaseModel):
     edges_imported: int
     id_map_size: int
 
-@app.get("/api/graph/data")
-def get_graph_data(namespace: str = Query(...)):
-    """获取指定命名空间的所有图谱节点与连线数据"""
-    return engine.get_graph_data(namespace)
-
 @app.post("/api/graph/edge", response_model=StatusMessageResponse)
 def add_edge(req: EdgeRequest):
     engine.add_edge(req.from_id, req.to_id, req.relation_type, req.confidence)
@@ -743,6 +754,135 @@ def search_graph_nodes(req: SearchRequest):
                 "community_id": meta["community_id"],
             })
     return {"query": req.query, "namespace": req.namespace, "total": len(filtered), "results": filtered}
+
+# ── CBM-style Structural Query Endpoints (codebase intelligence) ──
+
+class TracePathRequest(BaseModel):
+    namespace: str
+    start: str
+    direction: str = "outbound"
+    relation: str = "calls"
+    depth: int = 3
+    limit_per_node: int = 50
+
+class SearchGraphRequest(BaseModel):
+    namespace: str
+    node_type: Optional[str] = None
+    source_file_regex: Optional[str] = None
+    name_regex: Optional[str] = None
+    min_degree: Optional[int] = None
+    max_degree: Optional[int] = None
+    limit: int = 50
+    offset: int = 0
+
+class SnippetRequest(BaseModel):
+    namespace: str
+    node_id: Optional[str] = None
+    qualified_name: Optional[str] = None
+    context_lines: int = 6
+
+class DetectChangesRequest(BaseModel):
+    namespace: str
+    base: str = "HEAD"
+    unified: bool = False
+
+@app.post("/api/graph/trace")
+def trace_path(req: TracePathRequest):
+    """调用链 BFS：按符号查谁调用它 / 它调用什么（沿 calls 边）。start 可为 node_id/external_id/名称子串。"""
+    return engine.trace_path(req.namespace, req.start, req.direction, req.relation,
+                             req.depth, req.limit_per_node)
+
+@app.post("/api/graph/search-structured")
+def search_graph(req: SearchGraphRequest):
+    """结构化搜索：按 node_type / source_file 正则 / 名称正则 / degree 过滤代码节点，分页。"""
+    return engine.search_graph(req.namespace, req.node_type, req.source_file_regex, req.name_regex,
+                               req.min_degree, req.max_degree, req.limit, req.offset)
+
+@app.get("/api/graph/architecture")
+def get_architecture(namespace: str = Query(...), hotspot_top: int = Query(20)):
+    """架构总览：类型计数、文件/语言分布、社区、热点、入口候选。"""
+    return engine.get_architecture(namespace, hotspot_top)
+
+@app.get("/api/graph/dead-code")
+def dead_code(namespace: str = Query(...), limit: int = Query(500)):
+    """死代码：零入度（calls/method/references）的 function 节点。"""
+    return engine.dead_code(namespace, limit)
+
+@app.get("/api/graph/schema")
+def get_graph_schema(namespace: Optional[str] = Query(None)):
+    """图谱自省：node/edge 总数、按类型/关系计数、degree 分布、sample external_id。"""
+    return engine.get_graph_schema(namespace)
+
+@app.post("/api/graph/snippet")
+def get_code_snippet(req: SnippetRequest):
+    """按 node_id 或 qualified_name 读取符号的带行号源码片段。"""
+    return engine.get_code_snippet(req.namespace, req.node_id, req.qualified_name, req.context_lines)
+
+@app.post("/api/graph/changes")
+def detect_changes(req: DetectChangesRequest):
+    """git diff → 受影响符号 + blast radius(depth 2)+ 风险分级。无 git 时回退 hash-diff。"""
+    return engine.detect_changes(req.namespace, req.base, req.unified)
+
+
+# ── Team-shared graph artifact (download → commit → upload) ──
+
+@app.get("/api/graph/artifact/manifest")
+def team_artifact_manifest(namespace: str = Query(...)):
+    """构建团队共享工件并返回轻量 manifest（checksum + 计数，不含载荷）。同时把
+    .json.gz 写到 <data>/artifacts/<ns>.json.gz（固定路径，commit 友好）。"""
+    _check_protected(namespace)
+    return engine.build_team_artifact(namespace)
+
+
+@app.get("/api/graph/artifact")
+def team_artifact_download(namespace: str = Query(...)):
+    """下载团队共享工件 .json.gz。把它 commit 进你的 repo，队友 POST /artifact/restore 恢复。"""
+    manifest = engine.build_team_artifact(namespace)
+    path = manifest["path"]
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in namespace)
+    return StreamingResponse(
+        open(path, "rb"),
+        media_type="application/gzip",
+        headers={"Content-Disposition": f'attachment; filename="{safe}.json.gz"'},
+    )
+
+
+@app.post("/api/graph/artifact/restore")
+def team_artifact_restore(
+    file: UploadFile = File(...),
+    target_namespace: Optional[str] = Query(None, description="目标 namespace（默认=工件里的 namespace）"),
+):
+    """从上传的团队工件 .json.gz 恢复 namespace（后台任务，返回 task_id 轮询）。
+    REPLACE 语义：先清空目标再导入，保留原始 id/时间戳/向量（免重向量化）。受保护 ns 拒绝。"""
+    raw = file.file.read()
+    try:
+        if (file.filename or "").endswith(".gz"):
+            raw = gzip.decompress(raw)
+        data = json.loads(raw.decode("utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"无法解析工件文件: {e}")
+    if not isinstance(data, dict) or data.get("format") != "agent-memory-backup":
+        raise HTTPException(status_code=400, detail="不是 agent-memory 工件（format 字段不符）")
+    target = target_namespace or data.get("namespace")
+    if not target:
+        raise HTTPException(status_code=400, detail="工件无 namespace 且未指定 target_namespace")
+    _check_protected(target)
+
+    task_id = task_manager.create_task()
+
+    def run_restore():
+        def progress_callback(stage, current, total, message):
+            task_manager.update_progress(task_id, stage, current, total, message)
+        try:
+            result = engine.import_namespace(data, target_namespace=target, progress_callback=progress_callback)
+            task_manager.complete_task(task_id, result)
+        except Exception as e:
+            import traceback
+            task_manager.fail_task(task_id, f"{str(e)}\n{traceback.format_exc()}")
+
+    threading.Thread(target=run_restore, daemon=True).start()
+    return {"task_id": task_id, "namespace": target, "message": "工件恢复任务已创建（将清空目标 namespace 后导入）"}
+
 
 @app.post("/api/graph/import", response_model=GraphImportResponse)
 def import_graph_data(req: GraphImportRequest):

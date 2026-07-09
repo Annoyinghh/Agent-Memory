@@ -176,7 +176,9 @@ claude mcp add --transport http agent-memory http://<服务器IP>:8901/mcp
 claude mcp add --transport http agent-memory http://192.168.110.109:8901/mcp
 ```
 
-> Codex / Gemini CLI 用各自等价的 HTTP 传输注册（如 `codex mcp add --transport http ... <url>` / `gemini mcp add ... <url>`）。
+> 其他 CLI 用各自等价的 HTTP 传输接入：
+> - **Codex / Gemini CLI**：`codex mcp add --transport http ... <url>` / `gemini mcp add ... <url>`
+> - **Reasonix**：无 `mcp add`，编辑 `reasonix.toml` 的 `[[plugins]]` 或放项目根 `.mcp.json`（字段同 Claude Code）—— 见下方「Reasonix（reasonix.toml / .mcp.json）」。
 
 要点：
 - **本机 per-call stdio MCP 与这个长驻 HTTP MCP 共存**，不冲突；两者读写同一份 `/app/data`（**已实测**：MCP 容器写入、REST 容器立即可见，并发正常，无 ChromaDB 句柄失效）。
@@ -266,10 +268,59 @@ python install_skills.py --skip-mcp # 只分发 SKILL.md，不动 MCP 配置
 | **Codex** | `codex mcp add agent-memory -- docker run -i --rm -v <DATA>:/app/data agent-memory-server python server.py` | 全局：`~/.codex/config.toml`<br>项目：`.codex/config.toml` | 全局：`~/.codex/skills/`<br>项目：`.codex/skills/` |
 | **Gemini CLI** | `gemini mcp add agent-memory docker run -i --rm -v <DATA>:/app/data agent-memory-server python server.py` | 全局：`~/.gemini/config.json`<br>项目：`.gemini/settings.json` | 全局：`~/.gemini/skills/`<br>项目：`.gemini/skills/` |
 | **Antigravity** | *(同 Gemini CLI)* | 全局：`~/.gemini/config.json`<br>项目：`.gemini/settings.json` | 项目：`.agents/skills/` |
+| **Reasonix** | *(无 `mcp add`；编辑 `reasonix.toml` 的 `[[plugins]]`，或放项目根 `.mcp.json`)* | 全局：`~/.config/reasonix/config.toml`<br>项目：`./reasonix.toml` / `.mcp.json` | 通过 MCP 接入，无需 skill 文件 |
 
 > 💡 **`<DATA>`**：data 卷的宿主绝对路径，正斜杠写法。例：`E:/Agent-Memory/Agent-Memory-Server/data`（Windows）/ `/home/user/Agent-Memory/Agent-Memory-Server/data`（Linux）/ `/Users/user/...`（macOS）。
 >
 > 旧版（已废弃）：`<python_path> <server_path>` 直接用 conda python 跑 server.py。`install_skills.py --local` 仍保留此模式，但与 Docker backend 并存会触发数据竞态，**不要混用**。
+
+### Reasonix（reasonix.toml / .mcp.json）
+
+[Reasonix](https://github.com/esengine/DeepSeek-Reasonix)（DeepSeek 原生终端 agent，`npm i -g reasonix`）是标准 MCP 客户端，支持 **stdio + Streamable HTTP**。它**没有 `mcp add` 子命令**，而是读**项目根 `reasonix.toml`** 的 `[[plugins]]` 条目（`type` 选 transport），或**项目根 `.mcp.json`**（字段与 Claude Code 完全一致，字段对字段映射；两源合并，同名时 `reasonix.toml` 胜）。
+
+**① 远程（streamable-http，跨机器，推荐）**——走上面的长驻 `mcp` 服务（8901）。`reasonix.toml`：
+
+```toml
+[[plugins]]
+name = "agent-memory"
+type = "http"
+url = "http://<服务器IP>:8901/mcp"
+```
+
+或项目根 `.mcp.json`（等价）：
+
+```json
+{
+  "mcpServers": {
+    "agent-memory": { "type": "http", "url": "http://<服务器IP>:8901/mcp" }
+  }
+}
+```
+
+**② 本地（stdio，per-call 容器，与 Claude Code stdio MCP 等价）**——把 `<DATA>`/`<REPO>`/`<GRAPHIFY_CACHE>` 换成实际宿主路径（Windows 用正斜杠）：
+
+```toml
+[[plugins]]
+name = "agent-memory"
+command = "docker"
+args = [
+  "run", "-i", "--rm",
+  "-v", "<DATA>:/app/data",
+  "-v", "<REPO>:/workspace:ro",                 # 可选，只读挂载代码库，供 sync_codebase / precise_source_search
+  "-v", "<GRAPHIFY_CACHE>:/app/.graphify-cache",
+  "-e", "PYTHONIOENCODING=utf-8",
+  "-e", "GRAPHIFY_CACHE_DIR=/app/.graphify-cache",
+  "-e", "HEADROOM_TELEMETRY=off",
+  "-e", "HEADROOM_CCR_DIR=/app/data/headroom-ccr",
+  "agent-memory-server", "python", "server.py",
+]
+```
+
+> `<DATA>` 同上表；`<REPO>` 例 `E:/shipbearERP-master`；`<GRAPHIFY_CACHE>` 例 `E:/Agent-Memory/.mcp-graphify-cache`。不需要检索代码库的可删掉 `<REPO>` 那两行 `-v`/`-e`。
+>
+> **验证**：`reasonix doctor`（健康检查含 MCP 连线）→ `reasonix chat` 里打 `/mcp` 列出已连服务器与工具（工具名 `mcp__agent-memory__<tool>`）。
+>
+> 配置文件位置：项目级 `./reasonix.toml`（或 `.mcp.json`）；用户级 macOS/Linux `~/.config/reasonix/config.toml`、Windows `%AppData%\reasonix\config.toml`（v1.8.1+）。
 
 ---
 
@@ -562,6 +613,65 @@ project_overview()
 ### 同步还是慢？
 
 全量 `rebuild` 会对**所有文件重新向量化**（耗时主因）。改了几个文件想快速同步时，用**增量更新**（`incremental=true`，见上方「方式一·补充」）——只对内容变化的文件重新向量化，未变文件保留原向量，通常几秒搞定。需要重排社区着色时再用一次全量 `rebuild`。
+
+## 代码智能查询（CBM 风格）
+
+> 对齐 [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) 的「用图查询代替 grep/read」思路。图谱建好后，优先用这些结构化查询工具——一次调用代替数十次文件打开。MCP 与 REST 双通道。
+
+### 查询工具
+
+| 工具 | 作用 | REST |
+|---|---|---|
+| `get_graph_schema` | 图谱自省：node/edge 计数、类型/关系分布、degree 分布 | `GET /api/graph/schema` |
+| `get_architecture` | 架构总览：类型/文件/语言/社区/热点/入口候选 | `GET /api/graph/architecture` |
+| `search_graph` | 结构化搜索：type / 文件 / 名称正则 / degree / 分页 | `POST /api/graph/search-structured` |
+| `trace_path` | 调用链 BFS：谁调用 X / X 调用谁（depth 1-5） | `POST /api/graph/trace` |
+| `get_code_snippet` | 按符号（node_id 或名）读带行号源码 | `POST /api/graph/snippet` |
+| `dead_code` | 死代码：零入度（calls/method/references）函数 | `GET /api/graph/dead-code` |
+| `detect_changes` | git diff → 受影响符号 + blast radius + 风险分级（无 git → hash-diff 兜底） | `POST /api/graph/changes` |
+
+**典型流程：** `project_overview` → `get_graph_schema`/`get_architecture`（摸结构）→ `search_graph`（找节点）→ `trace_path`（看调用链）→ `get_code_snippet`（读代码）→ `detect_changes`（看改动影响）。
+
+> `trace_path` 的 `start` 若匹配多个节点，返回候选列表——用 `search_graph` 拿到精确 `node_id` 后再调用。
+
+### `node_type` 是粗粒度（重要）
+
+graphify 不发节点类型，系统推断为 `{function, class, file, document, rationale, symbol}` 之一。**方法也是 function**（靠 `.name()` 标签区分）。没有 CBM 那种 Function/Method/Interface 细粒度——过滤时别按细粒度期望。
+
+### auto-sync（后台自动增量同步，默认关）
+
+源码变了不用手动 rebuild。开启后 backend 后台轮询文件 hash 变化，自动增量重提取：
+
+```yaml
+# docker-compose.yml → backend.environment
+AUTO_SYNC_ENABLED: 1            # 开启（默认 0）
+AUTO_SYNC_INTERVAL: 60          # 秒
+AUTO_SYNC_NAMESPACES: ""        # 空 = 所有已索引 namespace
+AUTO_SYNC_TARGETS: "shipbearERP-master=/workspace"
+AUTO_SYNC_MAX_FILES: 10000
+```
+
+日志看 `docker compose logs backend` 里的 `[auto-sync]` 行。**用轮询而非 inotify**——Windows + Docker bind-mount 不传播文件事件。
+
+### 团队共享图工件（跳过重复索引）
+
+把图谱导出成可 commit 的文件，队友 restore 后**跳过全量提取 + embedding**：
+
+```bash
+# 1. owner 导出（写 <data>/artifacts/<ns>.json.gz + 返回 checksum/计数）
+curl "http://localhost:8900/api/graph/artifact/manifest?namespace=myproject"
+# 2. 下载并 commit 进你的 repo
+curl -OJ "http://localhost:8900/api/graph/artifact?namespace=myproject"
+git add myproject.json.gz && git commit && git push
+# 3. 队友 pull 后上传恢复（后台任务，轮询 GET /api/tasks/{task_id}）
+curl -F "file=@myproject.json.gz" "http://localhost:8900/api/graph/artifact/restore"
+```
+
+### 速度现实（诚实说明）
+
+- **首次全量重建**：分钟级（1 万节点）。慢在 embedding（每节点过 ONNX 推理），Python + ChromaDB 架构绕不开，**做不到 CBM 那种毫秒级**（那是 C + RAM-first + 无重型 embedding 的红利）。
+- **日常增量**：秒级。只重提变化的文件（auto-sync 自动跑）。这才是实际可用的速度感。
+- 对照：CBM 首次 Linux kernel 全量也要 3 分钟，毫秒级指的是它的日常增量/查询。
 
 ## 备份与恢复 (Backup / Restore)
 

@@ -483,6 +483,152 @@ def import_graph(nodes: str, edges: str, namespace: str) -> str:
     return f"Imported {result['nodes_imported']} nodes and {result['edges_imported']} edges into namespace '{namespace}'."
 
 
+# ============================================================
+# CBM-style Structural Query Tools (codebase intelligence)
+# ============================================================
+
+@mcp.tool()
+def trace_path(namespace: str, start: str, direction: str = "outbound",
+               relation: str = "calls", depth: int = 3, limit_per_node: int = 50) -> str:
+    """
+    Trace a call chain from a symbol — who calls it and what it calls (BFS over edges).
+    Use instead of opening files: e.g. 'what calls ProcessOrder' or 'what does main call'.
+    Args:
+        namespace: The project namespace.
+        start: A node_id, an exact external_id, or a literal substring of the symbol's
+               name/label. If multiple nodes match, the result lists candidates — re-call
+               with an exact node_id to disambiguate.
+        direction: 'outbound' (what it calls) / 'inbound' (who calls it) / 'both'.
+        relation: Edge type to follow (default 'calls').
+        depth: 1-5 (default 3).
+        limit_per_node: Cap edges per frontier node (default 50).
+    """
+    return json.dumps(engine.trace_path(namespace, start, direction, relation, depth, limit_per_node),
+                      ensure_ascii=False)
+
+
+@mcp.tool()
+def search_graph(namespace: str, node_type: str = None, source_file_regex: str = None,
+                 name_regex: str = None, min_degree: int = None, max_degree: int = None,
+                 limit: int = 50, offset: int = 0) -> str:
+    """
+    Structured search over code-graph nodes: filter by type, file, name, and degree.
+    node_type is one of: function, class, file, document, rationale, symbol (coarse —
+    methods are 'function'). source_file_regex / name_regex are Python regex (re.search).
+    min_degree/max_degree are inclusive bounds on total (in+out) degree.
+    Args:
+        namespace: The project namespace.
+        node_type: Optional node_type filter.
+        source_file_regex: Optional regex over the node's source_file path.
+        name_regex: Optional regex over the node's label (symbol name).
+        min_degree / max_degree: Optional inclusive total-degree bounds.
+        limit: Page size (default 50, max 500). offset: Pagination offset.
+    """
+    return json.dumps(engine.search_graph(namespace, node_type, source_file_regex, name_regex,
+                                          min_degree, max_degree, limit, offset), ensure_ascii=False)
+
+
+@mcp.tool()
+def get_architecture(namespace: str, hotspot_top: int = 20) -> str:
+    """
+    One-shot codebase overview: node-type counts, file/language breakdown, Louvain
+    communities, top-N degree hotspots, and entry-point candidates (functions nothing
+    calls). Call this first to orient on an unfamiliar namespace.
+    Args:
+        namespace: The project namespace.
+        hotspot_top: How many hotspots to return (default 20).
+    """
+    return json.dumps(engine.get_architecture(namespace, hotspot_top), ensure_ascii=False)
+
+
+@mcp.tool()
+def dead_code(namespace: str, limit: int = 500) -> str:
+    """
+    Find likely-dead functions: function nodes with zero inbound calls/method/references
+    edges. Heuristic — real entry points may also appear; pair with get_architecture's
+    entry_point_candidates to filter them.
+    Args:
+        namespace: The project namespace.
+        limit: Max results (default 500).
+    """
+    return json.dumps(engine.dead_code(namespace, limit), ensure_ascii=False)
+
+
+@mcp.tool()
+def get_graph_schema(namespace: str = None) -> str:
+    """
+    Introspect the graph: node/edge totals, per-node_type and per-relation counts,
+    degree distribution (min/median/max), and a sample external_id. Run this to learn a
+    namespace's shape before querying. Extends graph_stats.
+    Args:
+        namespace: Optional namespace filter. If omitted, returns global stats.
+    """
+    return json.dumps(engine.get_graph_schema(namespace), ensure_ascii=False)
+
+
+@mcp.tool()
+def get_code_snippet(namespace: str, node_id: str = None, qualified_name: str = None,
+                     context_lines: int = 6) -> str:
+    """
+    Read numbered source lines for a symbol by node_id or qualified name. Use after
+    search_graph/trace_path to pull the exact code. Resolves the file/line from the graph
+    node's provenance.
+    Args:
+        namespace: The project namespace.
+        node_id: Exact node id (preferred).
+        qualified_name: Symbol name/substring if node_id unknown (same matching as trace_path).
+        context_lines: Lines of context each side of the symbol line (default 6, max 50).
+    """
+    return json.dumps(engine.get_code_snippet(namespace, node_id, qualified_name, context_lines),
+                      ensure_ascii=False)
+
+
+@mcp.tool()
+def detect_changes(namespace: str, base: str = "HEAD", unified: bool = False) -> str:
+    """
+    Map uncommitted changes to affected graph symbols + blast radius (depth 2) with risk
+    classification (high/medium/low by downstream caller count). Uses `git diff` against
+    the indexed source dir; if git is unavailable it falls back to a content-hash diff
+    against the import manifest and returns git_unavailable=true. Never raises.
+    Args:
+        namespace: The project namespace.
+        base: Git ref to diff against (default 'HEAD' = uncommitted working-tree changes).
+        unified: Reserved for line-level mapping (currently name-only).
+    """
+    return json.dumps(engine.detect_changes(namespace, base, unified), ensure_ascii=False)
+
+
+@mcp.tool()
+def build_team_artifact(namespace: str) -> str:
+    """
+    Build a team-shared graph artifact: exports the namespace to a stable-path
+    .json.gz (with a checksum + node/edge counts) that you commit into your repo so
+    teammates skip re-indexing + re-embedding. Returns a manifest only — download the
+    file via GET http://<host>:8900/api/graph/artifact?namespace=<ns>.
+    Args:
+        namespace: The namespace to export.
+    """
+    return json.dumps(engine.build_team_artifact(namespace), ensure_ascii=False)
+
+
+@mcp.tool()
+def restore_team_artifact(file_path: str, target_namespace: str = None) -> str:
+    """
+    Restore a namespace from a team artifact .json.gz (produced by build_team_artifact
+    or GET /api/backup). REPLACE semantics: clears the target first, then imports with
+    original ids/vectors (no re-embedding). For large namespaces this may exceed an MCP
+    timeout — use POST /api/graph/artifact/restore (async task) instead.
+    Args:
+        file_path: Path to the .json.gz inside the container (e.g. /app/data/uploads/x.json.gz).
+        target_namespace: Optional target (defaults to the artifact's own namespace).
+    """
+    try:
+        result = engine.restore_team_artifact(file_path, target_namespace)
+        return json.dumps(result, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+
 @mcp.tool()
 def clear_namespace(namespace: str) -> str:
     """
