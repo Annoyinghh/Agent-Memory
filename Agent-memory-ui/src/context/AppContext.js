@@ -6,14 +6,26 @@ import { api } from '@/lib/api';
 const AppContext = createContext();
 
 export function AppProvider({ children }) {
-  const [activeNamespace, setActiveNamespace] = useState('all');
-  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'search', 'ingest'
+  // 从 localStorage 恢复上次选中的命名空间和 Tab，避免刷新后重置
+  const [activeNamespace, setActiveNamespace] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try { return localStorage.getItem('hermes_active_ns') || 'all'; } catch {}
+    }
+    return 'all';
+  });
+  const [activeTab, setActiveTab] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try { return localStorage.getItem('hermes_active_tab') || 'dashboard'; } catch {}
+    }
+    return 'dashboard';
+  });
   const [namespaces, setNamespaces] = useState([]);
   const [stats, setStats] = useState({ total_chunks: 0, namespaces: {} });
   const [isOnline, setIsOnline] = useState(false);
   const [lastEvent, setLastEvent] = useState({ type: 'init_silent', message: 'Holographic system standby.' });
   const [isGraphAvatarExpanded, setIsGraphAvatarExpanded] = useState(false);
   const [avatarMuted, setAvatarMuted] = useState(false); // Default unmuted for startup voice
+  const [isSimplified, setIsSimplified] = useState(true); // Simplified mode (no 3D decorations)
 
   const refreshData = useCallback(async (eventTrigger = null) => {
     try {
@@ -51,6 +63,25 @@ export function AppProvider({ children }) {
     }
   }, [namespaces, activeNamespace]);
 
+  // Toggle body class for simplified mode CSS overrides
+  useEffect(() => {
+    if (isSimplified) {
+      document.body.classList.add('simplified-mode');
+    } else {
+      document.body.classList.remove('simplified-mode');
+    }
+  }, [isSimplified]);
+
+  // 持久化命名空间选择 — 刷新后自动恢复
+  useEffect(() => {
+    try { localStorage.setItem('hermes_active_ns', activeNamespace); } catch {}
+  }, [activeNamespace]);
+
+  // 持久化当前 Tab — 刷新后回到上次看的位置
+  useEffect(() => {
+    try { localStorage.setItem('hermes_active_tab', activeTab); } catch {}
+  }, [activeTab]);
+
   return (
     <AppContext.Provider
       value={{
@@ -68,6 +99,8 @@ export function AppProvider({ children }) {
         refreshData,
         isGraphAvatarExpanded,
         setIsGraphAvatarExpanded,
+        isSimplified,
+        setIsSimplified,
       }}
     >
       {children}

@@ -312,3 +312,95 @@ body::after {
   box-shadow: 0 0 8px rgba(255, 187, 0, 0.25);
   transition: width 1s cubic-bezier(0.1, 0.8, 0.2, 1);
 }
+
+/* Simplified mode now uses a completely separate component (SimplifiedLayout.js).
+   This section only keeps body-scope minimal cleanup. */
+body.simplified-mode,
+body.simplified-mode .main-content {
+  background: #1a1b1e;
+  overflow: hidden; /* simplified layout manages its own scroll */
+}
+
+/* Hide the root layout's sidebar and header — SimplifiedLayout has its own */
+body.simplified-mode .layout-wrapper > .cyber-sidebar,
+body.simplified-mode .layout-wrapper > .main-content > .header-container {
+  display: none !important;
+}
+
+/* Remove the margin/padding the root layout normally adds for sidebar+header */
+body.simplified-mode .main-content {
+  margin-left: 0 !important;
+  padding: 0 !important;
+}
+
+body.simplified-mode .page-view-container {
+  height: 100vh !important;
+}
+
+/* Simplified mode common component styles */
+body.simplified-mode .sd-input {
+  font-size: 13px;
+  padding: 8px 12px;
+  background: #2c2d32;
+  border: 1px solid #383940;
+  color: #e8e8ed;
+  border-radius: 6px;
+  outline: none;
+}
+body.simplified-mode .sd-input:focus {
+  border-color: #6b9bff;
+}
+body.simplified-mode .sd-btn {
+  font-size: 13px;
+  padding: 8px 16px;
+  background: #6b9bff;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+body.simplified-mode .sd-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+body.simplified-mode .sd-btn:hover:not(:disabled) {
+  background: #5a8aee;
+}
+body.simplified-mode .sd-btn-sm {
+  font-size: 11px;
+  padding: 4px 12px;
+  background: #383940;
+  color: #a0a0b0;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+body.simplified-mode .sd-btn-sm:hover {
+  background: #ef5350;
+  color: #fff;
+}
+body.simplified-mode .sd-empty {
+  text-align: center;
+  padding: 24px;
+  color: #555;
+  font-size: 13px;
+}
+body.simplified-mode .sd-error {
+  color: #ef5350;
+  font-size: 13px;
+  padding: 8px 12px;
+  background: rgba(239,83,80,0.1);
+  border-radius: 6px;
+}
+body.simplified-mode .sd-packed {
+  font-size: 12px;
+  background: #151618;
+  border: 1px solid #2c2d32;
+  border-radius: 6px;
+  padding: 12px;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: #c0c0c8;
+}

@@ -11,7 +11,7 @@ export default function KnowledgeGraph() {
   const mountRef = useRef(null);
   const tooltipRef = useRef(null);
   
-  const { activeNamespace, namespaces, refreshData, setLastEvent } = useApp();
+  const { activeNamespace, namespaces, refreshData, setLastEvent, isSimplified } = useApp();
   
   // Graph Data States
   const [graphData, setGraphData] = useState({ nodes: [], edges: [] });
@@ -1225,31 +1225,103 @@ export default function KnowledgeGraph() {
   };
 
   return (
-    <div className="galaxy-vis-layout">
-      {/* 3D Visualizer Canvas container */}
-      <div className="galaxy-canvas-container" ref={mountRef}>
-        
-        {/* Quick status bar display */}
-        <div className="galaxy-status-hud font-mono">
-          <div className="telemetry-bar">
-            <span>[ FOCUS: {activeNamespace.toUpperCase()} ]</span>
-            <span>[ NODECOUNT: {graphStats.nodes || graphData.nodes?.length || 0} ]</span>
-            <span>[ EDGECOUNT: {graphStats.edges || graphData.edges?.length || 0} ]</span>
-            <span>[ RELATIONTYPES: {graphStats.relation_types?.length || 0} ]</span>
-            <span>[ FPS: 60 ]</span>
+    <div className={`galaxy-vis-layout ${isSimplified ? 'simplified' : ''}`}>
+      {isSimplified ? (
+        /* ── Simplified 2D Table View ── */
+        <div className="galaxy-simplified-view">
+          <div className="galaxy-status-hud font-mono" style={{ position: 'relative', marginBottom: '12px' }}>
+            <div className="telemetry-bar">
+              <span>[ FOCUS: {activeNamespace.toUpperCase()} ]</span>
+              <span>[ NODECOUNT: {graphStats.nodes || graphData.nodes?.length || 0} ]</span>
+              <span>[ EDGECOUNT: {graphStats.edges || graphData.edges?.length || 0} ]</span>
+              <span>[ RELATIONTYPES: {graphStats.relation_types?.length || 0} ]</span>
+            </div>
           </div>
-          <span className="scan-line"></span>
-        </div>
 
-        {/* Floating Tooltip */}
-        {hoveredNode && (
-          <div className="hud-tooltip font-mono" ref={tooltipRef}>
-            <div className="tooltip-head">[0x{hoveredNode.id.substring(0, 4)}]</div>
-            <div className="tooltip-content">{hoveredNode.content.substring(0, 100)}...</div>
-            <div className="tooltip-footer">Src: {hoveredNode.source}</div>
+          {loading ? (
+            <div className="sci-loading" style={{ textAlign: 'center', padding: '40px', color: 'hsl(var(--text-muted))' }}>
+              加载中...
+            </div>
+          ) : error ? (
+            <div className="sci-error" style={{ textAlign: 'center', padding: '40px', color: 'hsl(var(--color-red))' }}>
+              {error}
+            </div>
+          ) : graphData.nodes.length === 0 ? (
+            <div className="sci-empty" style={{ textAlign: 'center', padding: '40px', color: 'hsl(var(--text-muted))' }}>
+              暂无图谱数据，请使用下方控制台提取代码库
+            </div>
+          ) : (
+            <div className="galaxy-table-container" style={{ overflow: 'auto', maxHeight: 'calc(100vh - 250px)' }}>
+              <table className="galaxy-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid rgba(255,187,0,0.15)', color: 'hsl(var(--color-cyan))' }}>
+                    <th style={{ padding: '8px', textAlign: 'left' }}>ID</th>
+                    <th style={{ padding: '8px', textAlign: 'left' }}>标签</th>
+                    <th style={{ padding: '8px', textAlign: 'left' }}>类型</th>
+                    <th style={{ padding: '8px', textAlign: 'left' }}>来源</th>
+                    <th style={{ padding: '8px', textAlign: 'left' }}>社区</th>
+                    <th style={{ padding: '8px', textAlign: 'left' }}>内容</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(graphData.nodes || []).map((node) => (
+                    <tr
+                      key={node.id}
+                      onClick={() => setSelectedNode(node)}
+                      className="galaxy-table-row"
+                      style={{
+                        borderBottom: '1px solid rgba(255,187,0,0.05)',
+                        cursor: 'pointer',
+                        transition: 'background 0.15s',
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,187,0,0.05)'}
+                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <td style={{ padding: '6px 8px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'hsl(var(--color-cyan))' }}>
+                        {node.id?.substring(0, 8)}...
+                      </td>
+                      <td style={{ padding: '6px 8px', fontWeight: 600 }}>{node.label || '-'}</td>
+                      <td style={{ padding: '6px 8px' }}>{node.file_type || '-'}</td>
+                      <td style={{ padding: '6px 8px', fontSize: '10px', color: 'hsl(var(--text-muted))' }}>
+                        {node.source_file ? node.source_file.split(/[/\\]/).pop() : '-'}
+                      </td>
+                      <td style={{ padding: '6px 8px', fontSize: '10px' }}>{node.community_id ?? '-'}</td>
+                      <td style={{ padding: '6px 8px', fontSize: '10px', color: 'hsl(var(--text-muted))' }}>
+                        {node.content ? node.content.substring(0, 60) : '-'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ) : (
+        /* ── Full 3D Galaxy View ── */
+        <div className="galaxy-canvas-container" ref={mountRef}>
+          
+          {/* Quick status bar display */}
+          <div className="galaxy-status-hud font-mono">
+            <div className="telemetry-bar">
+              <span>[ FOCUS: {activeNamespace.toUpperCase()} ]</span>
+              <span>[ NODECOUNT: {graphStats.nodes || graphData.nodes?.length || 0} ]</span>
+              <span>[ EDGECOUNT: {graphStats.edges || graphData.edges?.length || 0} ]</span>
+              <span>[ RELATIONTYPES: {graphStats.relation_types?.length || 0} ]</span>
+              <span>[ FPS: 60 ]</span>
+            </div>
+            <span className="scan-line"></span>
           </div>
-        )}
-      </div>
+
+          {/* Floating Tooltip */}
+          {hoveredNode && (
+            <div className="hud-tooltip font-mono" ref={tooltipRef}>
+              <div className="tooltip-head">[0x{hoveredNode.id.substring(0, 4)}]</div>
+              <div className="tooltip-content">{hoveredNode.content.substring(0, 100)}...</div>
+              <div className="tooltip-footer">Src: {hoveredNode.source}</div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Floating Toggle Button for Console */}
       <button 
@@ -2586,6 +2658,35 @@ export default function KnowledgeGraph() {
           border-color: rgba(255, 187, 0, 0.3) !important;
           color: white !important;
           box-shadow: 0 0 8px rgba(255, 187, 0, 0.15);
+        }
+
+        /* Simplified 2D Table View */
+        .galaxy-vis-layout.simplified .galaxy-simplified-view {
+          padding: 20px;
+          height: 100%;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .galaxy-table-container {
+          border: 1px solid rgba(255, 187, 0, 0.1);
+          border-radius: 8px;
+          background: rgba(0, 0, 0, 0.3);
+        }
+
+        .galaxy-table thead {
+          position: sticky;
+          top: 0;
+          background: rgba(5, 4, 3, 0.98);
+          backdrop-filter: blur(8px);
+        }
+
+        .galaxy-table tbody tr:hover {
+          background: rgba(255, 187, 0, 0.08) !important;
+        }
+
+        .galaxy-table tbody tr:active {
+          background: rgba(255, 187, 0, 0.12) !important;
         }
       `}</style>
     </div>

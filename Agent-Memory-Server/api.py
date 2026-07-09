@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
-from memory_engine import MemoryEngine
+from memory_engine import MemoryEngine, _allowed_source_roots, _is_within_roots
 from task_manager import task_manager
 # Optional headroom-backed reversible compression (graceful no-op if unavailable).
 try:
@@ -33,6 +33,8 @@ except Exception:  # pragma: no cover - optional module
 import asyncio
 import gzip
 import json
+import struct
+import zlib
 import threading
 
 engine: MemoryEngine = None
@@ -244,6 +246,47 @@ class SessionContextResponse(BaseModel):
 def _check_protected(namespace: str):
     if engine.is_protected(namespace):
         raise HTTPException(status_code=403, detail=f"Namespace '{namespace}' is protected (read-only)")
+
+
+def _validate_target_path(path: str) -> None:
+    """Reject paths that resolve outside the allowed source roots.
+
+    Path-traversal defense for /api/graph/extract (target_dir) and
+    /api/graph/import-file (graph_path). Without this, an unauthenticated
+    caller on the LAN could point the extractor at any directory (e.g. /etc)
+    and read every parseable file's contents via /api/memory/search.
+    """
+    if not path:
+        raise HTTPException(status_code=400, detail="path must not be empty")
+    resolved = os.path.realpath(path)
+    if not _is_within_roots(resolved, _allowed_source_roots()):
+        raise HTTPException(
+            status_code=400,
+            detail=f"path '{path}' resolves outside allowed source roots. "
+                   "Set CODEBASE_SOURCE_ROOTS (comma-separated) to extend the allowlist.",
+        )
+
+
+def _gzip_stream(raw: bytes, level: int = 6, chunk_size: int = 65536):
+    """Generator: yield gzip-compressed chunks of `raw`.
+
+    Replaces gzip.compress(raw) for large payloads: instead of holding the full
+    compressed buffer in memory alongside `raw`, we emit compressed chunks
+    incrementally. Implements the gzip format (RFC 1952) manually via
+    zlib.compressobj with negative wbits (raw deflate, no zlib wrapper).
+    """
+    # gzip header: magic(2) + CM=8(1) + FLG=0(1) + MTIME=0(4) + XFL=2(1) + OS=255(1)
+    yield b'\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\xff'
+    compressor = zlib.compressobj(level, zlib.DEFLATED, -zlib.MAX_WBITS)
+    for i in range(0, len(raw), chunk_size):
+        out = compressor.compress(raw[i:i + chunk_size])
+        if out:
+            yield out
+    out = compressor.flush()
+    if out:
+        yield out
+    # trailer: CRC32(4 LE) + ISIZE(4 LE, uncompressed size mod 2^32)
+    yield struct.pack('<II', zlib.crc32(raw) & 0xFFFFFFFF, len(raw) & 0xFFFFFFFF)
 
 
 # ── Endpoints ──────────────────────────────────────────────────
@@ -734,6 +777,7 @@ def extract_codebase(req: GraphExtractRequest):
     cleared first, then re-extracted — idempotent, no duplicate accumulation.
     """
     _check_protected(req.namespace)
+    _validate_target_path(req.target_dir)
     from graphify_bridge import extract_to_memory
 
     # Create task and return task ID immediately
@@ -806,12 +850,14 @@ def backup_namespace(namespace: str = Query(...)):
     """
     data = engine.export_namespace(namespace)
     raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
-    compressed = gzip.compress(raw)
     ts = data.get("exported_at") or 0
     safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in namespace)
     filename = f"{safe}_{ts}.json.gz"
+    # Stream-gzip the payload instead of gzip.compress(raw) so we never hold
+    # the full compressed buffer alongside `raw` (halves peak memory on large
+    # namespaces).
     return StreamingResponse(
-        io.BytesIO(compressed),
+        _gzip_stream(raw),
         media_type="application/gzip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -874,6 +920,7 @@ def get_task_status(task_id: str):
 def import_graph_file(req: GraphFileImportRequest):
     """Import an existing graphify graph.json file into Agent Memory (background task)."""
     _check_protected(req.namespace)
+    _validate_target_path(req.graph_path)
     from graphify_bridge import import_from_graph_json
 
     # Create task and return task ID immediately

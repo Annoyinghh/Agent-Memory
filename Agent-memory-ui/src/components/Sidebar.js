@@ -26,6 +26,7 @@ export default function Sidebar() {
     { 
       label: '数据中心 // DASHBOARD', 
       value: 'dashboard',
+      tooltip: '系统总览：查看命名空间分布、链路状态、记忆容量数据和系统遥测',
       icon: (
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <rect x="3" y="3" width="7" height="9" />
@@ -38,6 +39,7 @@ export default function Sidebar() {
     { 
       label: '知识检索 // SEARCH', 
       value: 'search',
+      tooltip: '知识检索：混合语义搜索 + 上下文打包 + 源码精准定位 + 文本可逆压缩',
       icon: (
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <circle cx="11" cy="11" r="8" />
@@ -48,6 +50,7 @@ export default function Sidebar() {
     { 
       label: '数据注入 // INGEST', 
       value: 'ingest',
+      tooltip: '数据注入：手动插入知识碎片 + 冻结认知快照，为指定命名空间注入记忆',
       icon: (
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -59,6 +62,7 @@ export default function Sidebar() {
     { 
       label: '分层记忆 // MEM_LAYERS', 
       value: 'memory',
+      tooltip: '分层记忆：短期滑动窗口 + 工作记忆暂存 + 睡眠巩固（短期→长期迁移）',
       icon: (
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <polyline points="12 2 2 7 12 12 22 7 12 2" />
@@ -70,6 +74,7 @@ export default function Sidebar() {
     { 
       label: '星系图谱 // KNOWLEDGE_GALAXY', 
       value: 'graph',
+      tooltip: '知识图谱：可视化命名空间之间的图谱关联关系与节点网络',
       icon: (
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <circle cx="18" cy="5" r="3" />
@@ -83,6 +88,7 @@ export default function Sidebar() {
     { 
       label: '会话管理 // SESSIONS', 
       value: 'sessions',
+      tooltip: '会话管理：创建/管理会话、关联/解除记忆、恢复会话上下文',
       icon: (
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
@@ -95,6 +101,7 @@ export default function Sidebar() {
     { 
       label: '遗忘衰减 // DECAY_FORGET', 
       value: 'decay',
+      tooltip: '遗忘衰减：主动淘汰低分记忆 + 命名空间保护（只读锁定）+ 备份与恢复',
       icon: (
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M19 7l-.867 12.142A2 2 0 0 1 16.138 21H7.862a2 2 0 0 1-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v3M4 7h16" />
@@ -104,6 +111,7 @@ export default function Sidebar() {
     { 
       label: '使用教程 // USER_MANUAL', 
       value: 'tutorial',
+      tooltip: '使用教程：内置操作指南、MCP 调用示例与项目说明文档',
       icon: (
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
@@ -142,6 +150,7 @@ export default function Sidebar() {
               key={item.value}
               onClick={() => setActiveTab(item.value)}
               className={`cyber-nav-link ${isActive ? 'active' : ''}`}
+              title={item.tooltip}
               style={{
                 background: 'transparent',
                 border: 'none',

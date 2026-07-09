@@ -7,6 +7,7 @@ import GlassCard from '@/components/GlassCard';
 import DigitalAvatar from '@/components/DigitalAvatar';
 import KnowledgeGraph from '@/components/KnowledgeGraph';
 import TutorialBook from '@/components/TutorialBook';
+import SimplifiedLayout from '@/components/SimplifiedLayout';
 
 export default function SPAHomepage() {
   const { 
@@ -21,7 +22,9 @@ export default function SPAHomepage() {
     setActiveTab, 
     refreshData,
     avatarMuted,
-    isGraphAvatarExpanded
+    isGraphAvatarExpanded,
+    isSimplified,
+    setIsSimplified
   } = useApp();
 
   // ────────────────────────────────────────────────────────
@@ -934,7 +937,9 @@ export default function SPAHomepage() {
     return 'hsl(var(--text-muted))';
   };
 
-  return (
+  return isSimplified ? (
+    <SimplifiedLayout />
+  ) : (
     <div className={`cockpit-container ${activeTab === 'graph' ? 'graph-mode' : ''}`}>
       <div className={`cockpit-layout-grid active-tab-${activeTab}`}>
         
@@ -993,12 +998,14 @@ export default function SPAHomepage() {
         {/* ============================================================ */}
         {/* CENTER COLUMN: Large Interactive Holographic Head            */}
         {/* ============================================================ */}
+        {!isSimplified && (
         <div className={`avatar-center-panel ${activeTab === 'graph' ? (isGraphAvatarExpanded ? 'graph-avatar-expanded' : 'graph-avatar-collapsed') : ''}`}>
           <div className="radar-background"></div>
           <div className="avatar-container-inner">
             <DigitalAvatar />
           </div>
         </div>
+        )}
 
         {/* ============================================================ */}
         {/* RIGHT COLUMN (40%): Dynamic Operations Panel                 */}
@@ -1261,6 +1268,27 @@ export default function SPAHomepage() {
                   </svg>
                   COMPRESSION_TOOL // 压缩工具
                 </button>
+              </div>
+
+              {/* 💡 新手引导 — 检索工具选择指南 */}
+              <div style={{
+                padding: '12px 16px',
+                marginBottom: '16px',
+                background: 'linear-gradient(135deg, rgba(0,242,254,0.05) 0%, rgba(138,43,226,0.03) 100%)',
+                border: '1px solid rgba(0,242,254,0.12)',
+                borderRadius: '8px',
+                fontSize: '12px',
+                color: 'hsl(var(--text-muted))',
+                lineHeight: '1.8',
+                fontFamily: 'var(--font-mono)'
+              }}>
+                <div style={{ fontWeight: 'bold', color: 'hsl(var(--color-cyan))', marginBottom: '4px' }}>💡 四种检索工具 · 场景选择</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  <span>🔍 <strong>混合检索</strong> — 按语义相似度查找记忆块，适合问答和知识查找</span>
+                  <span>📦 <strong>上下文打包</strong> — 将相关记忆组装为 AI Prompt，适合为 LLM 提供上下文</span>
+                  <span>📂 <strong>源码检索</strong> — 在已导入的源码中搜索精确关键词（函数名、常量等）</span>
+                  <span>🗜️ <strong>压缩工具</strong> — 对长文本/日志/代码进行可逆语义压缩，节省 Token</span>
+                </div>
               </div>
 
               {searchSubMode === 'search' && (
@@ -1938,6 +1966,25 @@ export default function SPAHomepage() {
 
           {activeTab === 'ingest' && (
             <div className="tab-view-content fade-in-view ingest-tab-layout">
+              {/* 💡 新手引导 — 数据注入说明 */}
+              <div style={{
+                padding: '12px 16px',
+                marginBottom: '16px',
+                background: 'linear-gradient(135deg, rgba(0,242,254,0.05) 0%, rgba(138,43,226,0.03) 100%)',
+                border: '1px solid rgba(0,242,254,0.12)',
+                borderRadius: '8px',
+                fontSize: '12px',
+                color: 'hsl(var(--text-muted))',
+                lineHeight: '1.8',
+                fontFamily: 'var(--font-mono)',
+                width: '100%'
+              }}>
+                <div style={{ fontWeight: 'bold', color: 'hsl(var(--color-cyan))', marginBottom: '4px' }}>💡 数据注入 · 两种方式</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  <span>📝 <strong>手动注入</strong>（左侧）— 将知识文本插入指定命名空间，支持语义去重阈值调节</span>
+                  <span>📸 <strong>认知快照</strong>（右侧）— 冻结当前项目关键状态摘要，用于对话切换时恢复上下文</span>
+                </div>
+              </div>
               {/* Form 1: Memory Ingestion */}
               <div className="ingest-column">
                 <GlassCard title="手动知识注入 (Insert)" glowColor="cyan" className="op-panel-card">
@@ -1989,6 +2036,7 @@ export default function SPAHomepage() {
                       value={insertSource}
                       onChange={(e) => setInsertSource(e.target.value)}
                       className="sci-control-input"
+                      placeholder="例如：user_manual、api_doc、chat_log、code_comment…"
                       required
                     />
                   </div>
@@ -2001,6 +2049,7 @@ export default function SPAHomepage() {
                       onChange={(e) => setInsertContent(e.target.value)}
                       className="sci-control-textarea"
                       rows="4"
+                      placeholder="输入要注入的知识文本，例如：项目配置信息、API 文档片段、代码逻辑说明…"
                       required
                     />
                   </div>
@@ -2091,6 +2140,7 @@ export default function SPAHomepage() {
                       onChange={(e) => setSnapshotSummary(e.target.value)}
                       className="sci-control-textarea"
                       rows="5"
+                      placeholder="描述当前项目阶段的关键状态，例如：已完成用户认证模块重构，数据库迁移脚本准备就绪，下一步计划实现缓存层…"
                       required
                     />
                   </div>
@@ -2148,14 +2198,14 @@ export default function SPAHomepage() {
                           <div className="form-group-sci" style={{ marginBottom: 0 }}>
                             <label style={{ fontSize: '10px' }}>输入模拟对话内容</label>
                             <input
-                              type="text"
-                              value={newDialogContent}
-                              onChange={(e) => setNewDialogContent(e.target.value)}
-                              placeholder="键入一轮模拟的对话内容进行注入测试..."
-                              className="sci-control-input"
-                              style={{ padding: '6px 10px', fontSize: '11.5px', height: '34px' }}
-                              required
-                            />
+                                type="text"
+                                value={newDialogContent}
+                                onChange={(e) => setNewDialogContent(e.target.value)}
+                                placeholder="例如：当前任务目标是配置 Docker 的桥接网络，是否需要特权模式？"
+                                className="sci-control-input"
+                                style={{ padding: '6px 10px', fontSize: '11.5px', height: '34px' }}
+                                required
+                              />
                           </div>
                           <button type="submit" className="sci-submit-btn bg-cyan" disabled={addDialogLoading} style={{ padding: '0 16px', height: '34px', fontSize: '11px', whiteSpace: 'nowrap', flexShrink: 0, minWidth: '80px' }}>
                             {addDialogLoading ? '注入中...' : '注入对话'}
@@ -2377,6 +2427,26 @@ export default function SPAHomepage() {
         {/* TAB 5: SESSIONS (会话管理) */}
         {activeTab === 'sessions' && (
           <div className="tab-view-content fade-in-view ingest-tab-layout">
+            {/* 💡 新手引导 — 会话管理说明 */}
+            <div style={{
+              padding: '12px 16px',
+              marginBottom: '16px',
+              background: 'linear-gradient(135deg, rgba(0,242,254,0.05) 0%, rgba(138,43,226,0.03) 100%)',
+              border: '1px solid rgba(0,242,254,0.12)',
+              borderRadius: '8px',
+              fontSize: '12px',
+              color: 'hsl(var(--text-muted))',
+              lineHeight: '1.8',
+              fontFamily: 'var(--font-mono)',
+              width: '100%'
+            }}>
+              <div style={{ fontWeight: 'bold', color: 'hsl(var(--color-cyan))', marginBottom: '4px' }}>💡 会话管理 · 记忆与对话关联</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <span>📌 <strong>会话</strong> — 记录对话历史，每个会话可关联多条记忆，支持状态流转（活跃→归档→关闭）</span>
+                <span>🔗 <strong>关联记忆</strong> — 将已有记忆绑定到会话，方便按会话维度检索上下文</span>
+                <span>🔄 <strong>恢复上下文</strong> — 提取会话关联的所有记忆，打包为一段完整 Prompt 供 AI 使用</span>
+              </div>
+            </div>
             {activeNamespace === 'all' ? (
               <div style={{ display: 'flex', justifyContent: 'center', padding: '40px', width: '100%' }}>
                 <GlassCard title="系统提示 // SYSTEM NOTICE" glowColor="purple" className="op-panel-card" style={{ maxWidth: '600px', width: '100%' }}>
@@ -2516,7 +2586,7 @@ export default function SPAHomepage() {
                       <GlassCard title="关联记忆 (Linked Memories)" glowColor="purple" className="op-panel-card">
                         <form onSubmit={handleLinkMemory} className="sci-form" style={{ marginBottom: '12px' }}>
                           <div style={{ display: 'flex', gap: '8px' }}>
-                            <input type="text" value={linkMemoryId} onChange={(e) => setLinkMemoryId(e.target.value)} placeholder="输入记忆 ID 以关联..." className="sci-control-input" style={{ height: '30px', fontSize: '11px' }} required />
+                            <input type="text" value={linkMemoryId} onChange={(e) => setLinkMemoryId(e.target.value)} placeholder="输入记忆 ID（如 3f8a1b2c...）以关联到当前会话" className="sci-control-input" style={{ height: '30px', fontSize: '11px' }} required />
                             <button type="submit" className="sci-submit-btn bg-cyan" style={{ height: '30px', fontSize: '10px', whiteSpace: 'nowrap', minWidth: '60px' }}>
                               关联
                             </button>
@@ -2555,6 +2625,26 @@ export default function SPAHomepage() {
         {/* TAB 6: DECAY / FORGET (遗忘衰减) */}
         {activeTab === 'decay' && (
           <div className="tab-view-content fade-in-view ingest-tab-layout">
+            {/* 💡 新手引导 — 遗忘衰减说明 */}
+            <div style={{
+              padding: '12px 16px',
+              marginBottom: '16px',
+              background: 'linear-gradient(135deg, rgba(0,242,254,0.05) 0%, rgba(138,43,226,0.03) 100%)',
+              border: '1px solid rgba(0,242,254,0.12)',
+              borderRadius: '8px',
+              fontSize: '12px',
+              color: 'hsl(var(--text-muted))',
+              lineHeight: '1.8',
+              fontFamily: 'var(--font-mono)',
+              width: '100%'
+            }}>
+              <div style={{ fontWeight: 'bold', color: 'hsl(var(--color-cyan))', marginBottom: '4px' }}>💡 遗忘衰减 · 记忆生命周期管理</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <span>🧹 <strong>主动遗忘</strong> — 设置容量上限，自动淘汰低分记忆，为重要内容腾出空间</span>
+                <span>🔒 <strong>命名空间保护</strong> — 将命名空间设为只读，防止重要数据被写入或删除</span>
+                <span>💾 <strong>备份与恢复</strong> — 导出 .json.gz 备份文件，或从备份完整恢复命名空间</span>
+              </div>
+            </div>
             {activeNamespace === 'all' ? (
               <div style={{ display: 'flex', justifyContent: 'center', padding: '40px', width: '100%' }}>
                 <GlassCard title="系统提示 // SYSTEM NOTICE" glowColor="purple" className="op-panel-card" style={{ maxWidth: '600px', width: '100%' }}>
@@ -2712,6 +2802,7 @@ export default function SPAHomepage() {
                           accept=".gz"
                           onChange={(e) => setRestoreFile(e.target.files[0] || null)}
                           className="sci-control-input"
+                          title="选择之前导出的 .json.gz 备份文件。恢复操作会清空当前命名空间的所有数据，然后重新导入备份内容。"
                           style={{
                             padding: '6px 10px',
                             fontSize: '11px',
