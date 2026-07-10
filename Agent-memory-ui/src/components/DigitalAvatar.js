@@ -267,10 +267,21 @@ export default function DigitalAvatar() {
     const height = container.clientHeight;
 
     const scene = new THREE.Scene();
-    
-    let targetCameraZ = 4.2;
+
+    // 3D content bounds: head model (2.45) + tiara + HUD rings (ring3 radius 1.765) + animation margin
+    const CONTENT_RADIUS = 1.9;
+    const FOV_HALF_RAD = (45 * Math.PI / 180) / 2;
+    const TAN_FOV_HALF = Math.tan(FOV_HALF_RAD);
+
+    // Initial Z from container aspect ratio (ResizeObserver will refine on resize)
+    const initAspect = width / height || 1;
+    const initRadius = (width >= 600 ? CONTENT_RADIUS : 1.3) * 1.12;
+    const FIT_Z = Math.max(initRadius / TAN_FOV_HALF, initRadius / (TAN_FOV_HALF * initAspect));
+
+    let targetCameraZ = FIT_Z;
+    let headYShift = 0.1; // shift head up to clear bottom console panel; updated by ResizeObserver
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
-    camera.position.z = 4.2;
+    camera.position.z = FIT_Z;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
@@ -1001,9 +1012,9 @@ export default function DigitalAvatar() {
       const lerpSpeed = 0.035; // slower, natural, weighted look-at rotation
 
       if (headPoints && headGeometry) {
-        headPoints.position.y = floatOffsetY;
-        if (headWireframe) headWireframe.position.y = floatOffsetY;
-        if (headSolid) headSolid.position.y = floatOffsetY;
+        headPoints.position.y = floatOffsetY + headYShift;
+        if (headWireframe) headWireframe.position.y = floatOffsetY + headYShift;
+        if (headSolid) headSolid.position.y = floatOffsetY + headYShift;
 
         headPoints.rotation.x += (targetRotX - headPoints.rotation.x) * lerpSpeed;
         headPoints.rotation.y += (targetRotY - headPoints.rotation.y) * lerpSpeed;
@@ -1164,7 +1175,6 @@ export default function DigitalAvatar() {
 
     const resizeObserver = new ResizeObserver((entries) => {
       for (let entry of entries) {
-        // Use clientWidth/Height of container for exact rendering bounds
         if (!container) continue;
         const w = container.clientWidth;
         const h = container.clientHeight;
@@ -1173,15 +1183,31 @@ export default function DigitalAvatar() {
         camera.updateProjectionMatrix();
         renderer.setSize(w, h);
 
-        // Zoom out when avatar shrinks to narrow column in Search/Ingest tabs
-        // Zoom out even further when shrunk to a tiny icon/avatar on Graph tab
+        // Adaptive camera Z: compute from container aspect ratio so 3D content
+        // fits in BOTH dimensions. PerspectiveCamera FOV is vertical, so
+        // horizontal fit = vertical fit × aspect — narrow containers need
+        // larger Z to avoid horizontal clipping.
+        const aspect = w / h;
+        const tanF = Math.tan(FOV_HALF_RAD);
+        // Narrow containers: only ensure head + ears fit (radius ~1.3).
+        // Wide containers: include HUD rings (radius 1.9).
+        const radius = (w >= 600 ? CONTENT_RADIUS : 1.3) * 1.12;
+        const zVertical = radius / tanF;
+        const zHorizontal = radius / (tanF * aspect);
+        const fitZ = Math.max(zVertical, zHorizontal);
+
         if (w < 100) {
-          targetCameraZ = 5.0;
+          targetCameraZ = Math.max(5.0, fitZ);
         } else if (w < 450) {
-          targetCameraZ = 6.2;
+          targetCameraZ = Math.max(6.2, fitZ);
         } else {
-          targetCameraZ = 4.2;
+          targetCameraZ = fitZ;
         }
+
+        // Dynamically shift head upward to clear the console panel at bottom.
+        const visibleHeight = 2 * targetCameraZ * tanF;
+        const consoleRatio = Math.min(0.15, 90 / h);
+        headYShift = consoleRatio * visibleHeight * 0.5;
       }
     });
 
