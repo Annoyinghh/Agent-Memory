@@ -18,6 +18,10 @@ Agent-memory-ui/.next/
 # IDE
 .vscode/
 .idea/
+.claude/
+
+# Local audit/report artifacts (not for upstream)
+AGENT_MEMORY_AUDIT_REPORT.md
 
 # OS
 Thumbs.db
