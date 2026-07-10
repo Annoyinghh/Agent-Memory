@@ -44,6 +44,8 @@ export function AppProvider({ children }) {
       if (savedNs) setActiveNamespace(savedNs);
       const savedTab = localStorage.getItem('hermes_active_tab');
       if (savedTab) setActiveTab(savedTab);
+      const savedMode = localStorage.getItem('hermes_simplified');
+      if (savedMode !== null) setIsSimplified(savedMode === 'true');
     } catch {}
   }, []);
 
@@ -83,6 +85,11 @@ export function AppProvider({ children }) {
   useEffect(() => {
     try { localStorage.setItem('hermes_active_tab', activeTab); } catch {}
   }, [activeTab]);
+
+  // 持久化精简/完整模式 — 刷新后保持上次选择
+  useEffect(() => {
+    try { localStorage.setItem('hermes_simplified', String(isSimplified)); } catch {}
+  }, [isSimplified]);
 
   return (
     <AppContext.Provider
