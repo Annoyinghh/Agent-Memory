@@ -1,6 +1,7 @@
 /* 知识库管理系统全局样式与设计系统 - 金黑科幻 (Gold & Black Sci-Fi Theme) */
 
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap');
+@import "tailwindcss";
 
 :root {
   /* HSL Color Palette - Gold & Black Theme */

@@ -6,19 +6,10 @@ import { api } from '@/lib/api';
 const AppContext = createContext();
 
 export function AppProvider({ children }) {
-  // 从 localStorage 恢复上次选中的命名空间和 Tab，避免刷新后重置
-  const [activeNamespace, setActiveNamespace] = useState(() => {
-    if (typeof window !== 'undefined') {
-      try { return localStorage.getItem('hermes_active_ns') || 'all'; } catch {}
-    }
-    return 'all';
-  });
-  const [activeTab, setActiveTab] = useState(() => {
-    if (typeof window !== 'undefined') {
-      try { return localStorage.getItem('hermes_active_tab') || 'dashboard'; } catch {}
-    }
-    return 'dashboard';
-  });
+  // Defaults used for SSR and first client render (avoids hydration mismatch).
+  // localStorage values are restored in a useEffect below after mount.
+  const [activeNamespace, setActiveNamespace] = useState('all');
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [namespaces, setNamespaces] = useState([]);
   const [stats, setStats] = useState({ total_chunks: 0, namespaces: {} });
   const [isOnline, setIsOnline] = useState(false);
@@ -43,6 +34,17 @@ export function AppProvider({ children }) {
       console.error('Failed to sync with local memory engine:', error);
       setIsOnline(false);
     }
+  }, []);
+
+  // Restore last selection from localStorage (client-only; runs after mount so
+  // SSR and first client render share the same defaults — no hydration mismatch).
+  useEffect(() => {
+    try {
+      const savedNs = localStorage.getItem('hermes_active_ns');
+      if (savedNs) setActiveNamespace(savedNs);
+      const savedTab = localStorage.getItem('hermes_active_tab');
+      if (savedTab) setActiveTab(savedTab);
+    } catch {}
   }, []);
 
   // Poll connection and stats every 5 seconds

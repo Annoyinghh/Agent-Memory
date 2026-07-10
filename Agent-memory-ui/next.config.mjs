@@ -13,7 +13,7 @@ const nextConfig = {
       beforeFiles: [
         {
           source: '/api/:path*',
-          destination: 'http://127.0.0.1:8900/api/:path*',
+          destination: 'http://backend:8900/api/:path*',
         },
       ],
     };
