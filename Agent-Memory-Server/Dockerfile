@@ -38,9 +38,22 @@ RUN pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir /tmp/
 #     can be retried without re-running apt. Also installs `git` — needed by the
 #     detect_changes tool (git diff → impacted symbols); without it detect_changes
 #     gracefully falls back to a content-hash diff at runtime.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential python3-dev git \
-    && rm -rf /var/lib/apt/lists/*
+# Switch to TUNA mirror (HTTPS) — the build host's TUN proxy returns 502 on
+# deb.debian.org; HTTPS to a domestic mirror is stable. Retry loop below also
+# tolerates intermittent flakes.
+RUN sed -i 's|http://deb.debian.org/debian|https://mirrors.tuna.tsinghua.edu.cn/debian|g; s|http://deb.debian.org/debian-security|https://mirrors.tuna.tsinghua.edu.cn/debian-security|g' /etc/apt/sources.list.d/debian.sources
+RUN set +e; \
+    for i in $(seq 1 6); do \
+      apt-get update \
+      && apt-get install -y --no-install-recommends build-essential python3-dev git \
+      && { echo "APT_INSTALL_OK"; break; }; \
+      echo ">>> apt install attempt $i failed, retrying in 10s"; sleep 10; \
+      dpkg --configure -a 2>/dev/null; \
+      rm -rf /var/lib/apt/lists/*; \
+    done; \
+    rm -rf /var/lib/apt/lists/*; \
+    test -f /usr/bin/gcc && test -f /usr/bin/git && echo "apt deps verified" \
+    || { echo "FATAL: apt install failed after retries"; exit 1; }
 
 # 2b) headroom-ai[all] — optional reversible context compression (pulls PyTorch + Kompress,
 #     ~large). BEST-EFFORT + retried because the build host's network is flaky: on final
@@ -48,7 +61,7 @@ RUN apt-get update \
 #     passthrough at runtime. Rebuild when the network is healthy to enable it. Status is
 #     visible via headroom_stats (MCP) or GET /api/compress/stats.
 RUN set +e; \
-    for i in $(seq 1 8); do \
+    for i in $(seq 1 1); do \
       pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 \
         && pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir --retries 6 --timeout 300 "headroom-ai[all]" \
         && python -c "import headroom" && { echo "HEADROOM_INSTALL_OK"; break; }; \
@@ -64,7 +77,7 @@ RUN set +e; \
 #     compression passthroughs until a later rebuild succeeds.
 RUN set +e; \
     mkdir -p /app/data/headroom-ccr; \
-    for i in $(seq 1 8); do \
+    for i in $(seq 1 1); do \
       python -c "from headroom import compress, CompressConfig; cfg=CompressConfig(compress_user_messages=True, protect_analysis_context=False, protect_recent=0, min_tokens_to_compress=50); r=compress([{'role':'user','content':'[{\"id\":'+str(1)+'},' * 300 + ']' }], config=cfg); print('HEADROOM_WARMUP before=%d after=%d ratio=%.2f' % (r.tokens_before, r.tokens_after, r.compression_ratio))" \
         && { echo "HEADROOM_WARMUP_OK"; break; }; \
       echo ">>> headroom warmup attempt $i failed, retrying in 12s"; sleep 12; \
@@ -75,7 +88,7 @@ RUN set +e; \
 #    into the image. Without this, the FIRST extraction in a fresh container hangs
 #    on a slow runtime download; baking it in makes extraction work offline & fast.
 RUN set +e; \
-    for i in $(seq 1 8); do \
+    for i in $(seq 1 1); do \
       python -c "import chromadb; from chromadb.utils import embedding_functions as e; e.DefaultEmbeddingFunction()(['warmup'])" \
         && { echo "CHROMADB_WARMUP_OK"; break; }; \
       echo ">>> chromadb warmup attempt $i failed, retrying in 12s"; sleep 12; \

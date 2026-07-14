@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useApp } from '@/context/AppContext';
 
 export default function Header() {
-  const { activeNamespace, setActiveNamespace, namespaces, activeTab } = useApp();
+  const { activeNamespace, setActiveNamespace, namespaces, activeTab, isSimplified, setIsSimplified } = useApp();
 
   const getPageTitle = () => {
     switch (activeTab) {
@@ -46,6 +46,7 @@ export default function Header() {
             value={activeNamespace}
             onChange={(e) => setActiveNamespace(e.target.value)}
             className="namespace-select"
+            title="选择要操作的命名空间。每个命名空间是一个独立的数据分区，用于隔离不同项目或应用的数据。"
           >
             <option value="all">全部命名空间 (All Namespaces)</option>
             {namespaces.filter((ns) => ns !== 'all').map((ns) => (
@@ -55,6 +56,29 @@ export default function Header() {
             ))}
           </select>
         </div>
+
+        <button
+          onClick={() => setIsSimplified(!isSimplified)}
+          className={`simplify-toggle ${isSimplified ? 'simplified' : 'full'}`}
+          title={isSimplified ? '切换到完整模式' : '切换到精简模式'}
+        >
+          {isSimplified ? (
+            <>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              <span>精简</span>
+            </>
+          ) : (
+            <>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24M1 1l22 22" />
+              </svg>
+              <span>完整</span>
+            </>
+          )}
+        </button>
       </div>
 
       <style jsx>{`
@@ -134,6 +158,42 @@ export default function Header() {
           box-shadow: 
             0 0 10px rgba(255, 187, 0, 0.15),
             inset 0 0 5px rgba(255, 187, 0, 0.05);
+        }
+
+        .action-section {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+        }
+
+        .simplify-toggle {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 14px;
+          border-radius: 8px;
+          border: 1px solid rgba(255, 187, 0, 0.2);
+          background: rgba(10, 8, 5, 0.65);
+          color: hsl(var(--text-muted));
+          font-size: 12px;
+          font-family: var(--font-outfit);
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+
+        .simplify-toggle:hover {
+          border-color: hsl(var(--color-cyan));
+          color: hsl(var(--text-primary));
+        }
+
+        .simplify-toggle.simplified {
+          border-color: rgba(74, 222, 128, 0.3);
+          color: hsl(142 70% 60%);
+        }
+
+        .simplify-toggle.full {
+          border-color: rgba(255, 187, 0, 0.3);
+          color: hsl(var(--color-cyan));
         }
 
         @media (max-width: 1024px) {

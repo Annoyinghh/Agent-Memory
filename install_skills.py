@@ -10,6 +10,12 @@ the compose backend uses. This keeps a single data owner (no split-brain between
 a local conda process and the container) — the root cause of the historical
 "Error finding id" / cross-process ChromaDB stale-handle bugs.
 
+For Reasonix, the default mode uses HTTP (streamable-http) against the Docker
+Compose `mcp` container on port 8901, written to the project-level
+`reasonix.toml`. Pass --reasonix-global to register globally (available in all
+Reasonix sessions). Pass --reasonix-stdio to use per-call `docker run` stdio
+instead (matching other CLI tools).
+
 Run AFTER `docker compose up -d --build` so the image exists.
 
     python install_skills.py
@@ -81,6 +87,114 @@ def _local_python_and_server(project_root: str):
     )
 
 
+# ── Reasonix support ──────────────────────────────────────────────────────────
+
+REASONIX_HTTP_URL = "http://localhost:8901/mcp"
+
+
+def _reasonix_http_block() -> str:
+    """TOML [[plugins]] block for Reasonix HTTP mode (Docker Compose mcp container)."""
+    return (
+        '[[plugins]]\n'
+        'name    = "agent-memory"\n'
+        'type    = "http"\n'
+        'url     = "%s"\n'
+    ) % REASONIX_HTTP_URL
+
+
+def _reasonix_stdio_block(project_root: str) -> str:
+    """TOML [[plugins]] block for Reasonix stdio mode (docker run per-call)."""
+    data_volume = _data_volume_arg(project_root)
+    return (
+        '[[plugins]]\n'
+        'name    = "agent-memory"\n'
+        'type    = "stdio"\n'
+        'command = "docker"\n'
+        'args    = ["run", "-i", "--rm",\n'
+        '          "-v", "%s",\n'
+        '          "-e", "PYTHONIOENCODING=utf-8",\n'
+        '          "%s",\n'
+        '          "python", "server.py"]\n'
+    ) % (data_volume, IMAGE)
+
+
+def get_reasonix_project_config_path(project_root: str) -> str:
+    """Path to the project-level reasonix.toml."""
+    return os.path.join(project_root, "reasonix.toml")
+
+
+def get_reasonix_global_config_path() -> str | None:
+    """Path to the global Reasonix config, or None if home dir unreachable."""
+    # Windows: %APPDATA%/reasonix/config.toml
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        return os.path.join(appdata, "reasonix", "config.toml")
+    # Linux/macOS: ~/.config/reasonix/config.toml
+    home = os.path.expanduser("~/.config/reasonix/config.toml")
+    if os.path.exists(home) or os.path.exists(os.path.dirname(home)):
+        return home
+    # Fallback: ~/.reasonix/config.toml
+    return os.path.join(os.path.expanduser("~"), ".reasonix", "config.toml")
+
+
+def write_reasonix_mcp(config_path: str, use_http: bool = True, project_root: str | None = None):
+    """Append (or create) a [[plugins]] section to the given reasonix config.
+
+    Args:
+        config_path: Absolute path to the reasonix config file.
+        use_http: If True, register via HTTP (Docker Compose mcp container on port 8901).
+                  If False, register via stdio (docker run per-call, like other CLI tools).
+        project_root: Project root (required for stdio mode to compute Docker volume paths).
+    """
+    if not use_http and not project_root:
+        raise ValueError("project_root is required for stdio mode")
+
+    block = _reasonix_http_block() if use_http else _reasonix_stdio_block(project_root)
+
+    try:
+        existing = ""
+        if os.path.exists(config_path):
+            with open(config_path, "r", encoding="utf-8") as f:
+                existing = f.read().rstrip()
+
+        # Check if agent-memory plugin is already registered (avoid duplicates).
+        if "name    = \"agent-memory\"" in existing:
+            rel = os.path.relpath(config_path)
+            print(f"  [Skip] {rel}: agent-memory plugin already present")
+            return
+
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        with open(config_path, "a", encoding="utf-8") as f:
+            if existing:
+                f.write("\n\n")
+            f.write(block)
+
+        mode = "HTTP (Docker Compose mcp:8901)" if use_http else "stdio (docker run per-call)"
+        rel = os.path.relpath(config_path)
+        print(f"  [OK] {rel}: agent-memory registered ({mode})")
+    except Exception as e:
+        rel = os.path.relpath(config_path)
+        print(f"  [Failed] {rel}: {e}")
+
+
+def write_reasonix_project_mcp(project_root: str, use_http: bool = True):
+    """Append (or create) a [[plugins]] section to the project's reasonix.toml."""
+    path = get_reasonix_project_config_path(project_root)
+    write_reasonix_mcp(path, use_http=use_http)
+
+
+def write_reasonix_global_mcp(use_http: bool = True, project_root: str | None = None):
+    """Append (or create) a [[plugins]] section to the global Reasonix config.
+
+    All Reasonix sessions on this machine will then have agent-memory available.
+    """
+    path = get_reasonix_global_config_path()
+    if not path:
+        print("  [Failed] Cannot determine global Reasonix config path")
+        return
+    write_reasonix_mcp(path, use_http=use_http, project_root=project_root)
+
+
 # ── skill distribution (unchanged, host-side files) ──────────────────────────
 
 def install_skills(project_root):
@@ -90,6 +204,7 @@ def install_skills(project_root):
         ".gemini/skills/agent-memory/SKILL.md",
         ".claude/skills/agent-memory/SKILL.md",
         ".codex/skills/agent-memory/SKILL.md",
+        ".reasonix/skills/agent-memory/SKILL.md",
     ]
     if not os.path.exists(source):
         print(f"Error: Source skill file {source} does not exist!")
@@ -149,86 +264,7 @@ def write_gemini_project_mcp(project_root, use_docker=True):
         print(f"  [Failed] Gemini project config: {e}")
 
 
-# ── Reasonix (no `mcp add`; append [[plugins]] to the USER-LEVEL config.toml) ─
-
-# Managed-block markers make the registration idempotent: a re-run strips the
-# previous auto-managed block before appending a fresh one (no duplicate plugins).
-REASONIX_BEGIN = "# >>> agent-memory MCP (managed by install_skills.py) >>>"
-REASONIX_END = "# <<< agent-memory MCP (managed by install_skills.py) <<<"
-
-
-def _reasonix_user_config_path() -> str:
-    """Reasonix user-level config (v1.8.1+). Lives outside any one project, so the
-    plugin is available in every project the user opens with Reasonix."""
-    if sys.platform == "win32":
-        base = os.environ.get("APPDATA") or os.path.expanduser("~")
-        return os.path.join(base, "reasonix", "config.toml")
-    return os.path.join(os.path.expanduser("~"), ".config", "reasonix", "config.toml")
-
-
-def _toml_basic_string(s: str) -> str:
-    """Quote a TOML basic (double-quoted) string, escaping backslash and quote."""
-    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
-def _reasonix_plugin_block(use_docker, project_root) -> str:
-    """A marker-delimited [[plugins]] TOML block for Reasonix (stdio transport)."""
-    if use_docker:
-        args = _docker_run_args(_data_volume_arg(project_root))
-        command = "docker"
-    else:
-        python_exe, server_py = _local_python_and_server(project_root)
-        args = [python_exe, server_py]
-        command = python_exe
-    args_toml = ", ".join(_toml_basic_string(a) for a in args)
-    return (
-        f"{REASONIX_BEGIN}\n"
-        "[[plugins]]\n"
-        'name = "agent-memory"\n'
-        f"command = {_toml_basic_string(command)}\n"
-        f"args = [{args_toml}]\n"
-        f"{REASONIX_END}\n"
-    )
-
-
-def write_reasonix_user_config(project_root, use_docker=True):
-    """Append the agent-memory plugin to Reasonix's user-level config.toml.
-
-    Reasonix has no `mcp add` CLI, and its project-level reasonix.toml only applies
-    inside that one directory — so we write the user-level config (every project the
-    user opens then sees the plugin). We use [[plugins]] directly, NOT a project
-    .mcp.json (Claude Code also reads .mcp.json, which would double-register). The
-    block is wrapped in managed markers so re-runs are idempotent (no duplicates).
-    """
-    import re
-    path = _reasonix_user_config_path()
-    existing = ""
-    if os.path.exists(path):
-        try:
-            existing = open(path, encoding="utf-8").read()
-        except Exception:
-            existing = ""
-    # Idempotency: drop any prior managed block before re-appending.
-    pattern = re.compile(
-        re.escape(REASONIX_BEGIN) + r".*?" + re.escape(REASONIX_END) + r"\n?",
-        re.DOTALL,
-    )
-    existing = pattern.sub("", existing)
-    if existing and not existing.endswith("\n"):
-        existing += "\n"
-    if existing and not existing.endswith("\n\n"):
-        existing += "\n"
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        open(path, "w", encoding="utf-8").write(
-            existing + _reasonix_plugin_block(use_docker, project_root)
-        )
-        print(f"  [OK] Reasonix user config updated: {path}")
-    except Exception as e:
-        print(f"  [Failed] Reasonix user config: {e}")
-
-
-def register_mcp_servers(project_root, use_docker=True):
+def register_mcp_servers(project_root, use_docker=True, reasonix_stdio=False, reasonix_global=False):
     print("\nRegistering MCP server via CLI tools...")
 
     if use_docker:
@@ -273,9 +309,13 @@ def register_mcp_servers(project_root, use_docker=True):
     print("Registering Gemini / Antigravity (project config)...")
     write_gemini_project_mcp(project_root, use_docker=use_docker)
 
-    # Reasonix: no `mcp add` CLI; append [[plugins]] to the user-level config.toml.
-    print("Registering Reasonix (user config.toml)...")
-    write_reasonix_user_config(project_root, use_docker=use_docker)
+    # Reasonix: write config directly (project-level or global).
+    if reasonix_global:
+        print("Registering Reasonix (global config)...")
+        write_reasonix_global_mcp(use_http=not reasonix_stdio, project_root=project_root)
+    else:
+        print("Registering Reasonix (project config)...")
+        write_reasonix_project_mcp(project_root, use_http=not reasonix_stdio)
 
 
 # ── entrypoint ────────────────────────────────────────────────────────────────
@@ -286,6 +326,10 @@ def main():
                         help="Use local conda/venv python instead of Docker (NOT recommended)")
     parser.add_argument("--skip-mcp", action="store_true",
                         help="Only distribute SKILL.md, don't touch MCP config")
+    parser.add_argument("--reasonix-stdio", action="store_true",
+                        help="Register Reasonix MCP via stdio (docker run per-call) instead of HTTP (Docker Compose mcp:8901)")
+    parser.add_argument("--reasonix-global", action="store_true",
+                        help="Register in the GLOBAL Reasonix config (%%APPDATA%%/reasonix/config.toml) instead of project-level reasonix.toml. All Reasonix sessions will see agent-memory.")
     args = parser.parse_args()
 
     project_root = os.path.dirname(os.path.abspath(__file__))
@@ -309,16 +353,22 @@ def main():
             print(f"      docker compose up -d --build")
             sys.exit(1)
 
-    register_mcp_servers(project_root, use_docker=use_docker)
+    register_mcp_servers(project_root, use_docker=use_docker, reasonix_stdio=args.reasonix_stdio, reasonix_global=args.reasonix_global)
 
     if use_docker:
         print("\nSetup complete. MCP runs in the container (single data owner).")
         print("Restart each CLI session (or /mcp) to pick up the new config.")
+        if args.reasonix_global:
+            print("Reasonix: registered globally — available in ALL project sessions.")
+        else:
+            print("Reasonix: registered in project-level reasonix.toml (this project only).")
+            print("         Pass --reasonix-global to make it available everywhere.")
     else:
         print("\nSetup complete (LOCAL mode). WARNING: a local python MCP + the Docker")
         print("backend both touch the same data — this can cause stale-handle data loss.")
+
     print("Skills discovered by: Antigravity (.agents/skills), Gemini (.gemini/skills),")
-    print("Claude Code (.claude/skills), Codex (.codex/skills).")
+    print("Claude Code (.claude/skills), Codex (.codex/skills), Reasonix (.reasonix/skills).")
 
 
 if __name__ == "__main__":

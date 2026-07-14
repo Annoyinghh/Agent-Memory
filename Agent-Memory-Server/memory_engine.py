@@ -1,6 +1,7 @@
 import sqlite3
 import time
 import os
+from pathlib import Path
 import chromadb
 import litellm
 from typing import List, Dict, Any, Optional
@@ -27,6 +28,69 @@ def db_lock(func):
         with self.lock:
             return func(self, *args, **kwargs)
     return wrapper
+
+
+# ── Source-path confinement (path-traversal defense) ──────────────────────
+# _resolve_indexed_source_path resolves graph_nodes.source_file to a real on-disk
+# path. Without confinement, an attacker who calls /api/graph/import with a
+# crafted source_file ("../../etc/passwd") can read arbitrary files: the snippet
+# is stored as a memory and returned by /api/memory/search. These helpers limit
+# resolution to an allowlist of roots.
+#
+# Default roots:
+#   - /workspace                  (Docker code-repo mount point)
+#   - engine file's parent dir   (local-dev relative paths)
+# Extend via CODEBASE_SOURCE_ROOTS env var (comma-separated absolute paths).
+def _allowed_source_roots() -> List[str]:
+    roots: List[str] = []
+    env_roots = os.environ.get("CODEBASE_SOURCE_ROOTS", "")
+    for r in env_roots.split(","):
+        r = r.strip()
+        if r:
+            roots.append(os.path.realpath(r))
+    # /workspace is the default Docker mount point for the code repo.
+    roots.append(os.path.realpath("/workspace"))
+    # Engine's parent dir enables local-dev relative paths.
+    roots.append(os.path.realpath(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    # Dedupe while preserving order.
+    seen = set()
+    out = []
+    for r in roots:
+        if r not in seen:
+            seen.add(r)
+            out.append(r)
+    return out
+
+
+def _is_within_roots(path: str, roots: List[str]) -> bool:
+    """True if `path` is at or under one of `roots`. Caller must realpath the
+    path first. Uses commonpath to be symlink-safe."""
+    for root in roots:
+        try:
+            if os.path.commonpath([path, root]) == root:
+                return True
+        except ValueError:
+            # Different drives (Windows) or other commonpath failure — skip.
+            continue
+    return False
+
+
+def _count_tokens(text: str) -> int:
+    """Token counter backed by litellm (already a project dependency).
+
+    Replaces the prior len//4 heuristic which over-estimated CJK text budget
+    by ~4x (Chinese chars are ~1 token each, not 0.25). Falls back to a
+    CJK-aware heuristic if litellm is unavailable or errors on edge input.
+    """
+    if not text:
+        return 0
+    try:
+        return int(litellm.token_counter(model="gpt-4o", text=text))
+    except Exception:
+        # Heuristic: CJK / fullwidth chars ≈ 1 token each, others ≈ 4 chars/token.
+        cjk = sum(1 for c in text if ord(c) > 0x2E80)
+        return cjk + (len(text) - cjk) // 4
+
 
 class MemoryItem(BaseModel):
     id: str
@@ -57,6 +121,18 @@ class MemoryEngine(CodeQueryMixin):
         # retry on "database is locked" instead of failing fast.
         self.conn = sqlite3.connect(self.sqlite_path, check_same_thread=False, timeout=30)
         self.cursor = self.conn.cursor()
+        # WAL mode gives much better concurrent-read throughput (the backend
+        # and MCP containers share this DB file) and pairs safely with
+        # synchronous=NORMAL for write throughput. busy_timeout avoids
+        # "database is locked" under the multi-process mount.
+        try:
+            self.cursor.execute("PRAGMA journal_mode=WAL")
+            self.cursor.execute("PRAGMA synchronous=NORMAL")
+            self.cursor.execute("PRAGMA busy_timeout=5000")
+        except sqlite3.OperationalError:
+            # PRAGMA may be rejected on some SQLite builds / networked FS —
+            # engine stays functional with the default rollback journal.
+            pass
         self._init_sqlite()
 
         # 2. Initialize ChromaDB (Vector Search)
@@ -287,6 +363,28 @@ class MemoryEngine(CodeQueryMixin):
             return {"access_count": row[0], "is_pinned": bool(row[1])}
         return {"access_count": 0, "is_pinned": False}
 
+    @db_lock
+    def _get_stats_batch(self, doc_ids: List[str]) -> Dict[str, dict]:
+        """Batch-fetch stats for multiple ids in one query (avoids N+1 _get_stats).
+
+        Returns a dict keyed by doc_id. Missing ids are simply absent from the
+        result; callers should default with .get(id, {"access_count": 0, ...}).
+        """
+        if not doc_ids:
+            return {}
+        result: Dict[str, dict] = {}
+        # SQLite caps bound variables per statement (default 999). Chunk to stay safe.
+        for i in range(0, len(doc_ids), 500):
+            chunk = doc_ids[i:i + 500]
+            placeholders = ",".join(["?"] * len(chunk))
+            self.cursor.execute(
+                f"SELECT id, access_count, is_pinned FROM memory_stats WHERE id IN ({placeholders})",
+                chunk,
+            )
+            for row in self.cursor.fetchall():
+                result[row[0]] = {"access_count": row[1], "is_pinned": bool(row[2])}
+        return result
+
     def _refresh_collection(self) -> None:
         """Re-open the ChromaDB client + collection from disk.
 
@@ -309,7 +407,13 @@ class MemoryEngine(CodeQueryMixin):
         """
         try:
             return self.collection.query(**query_args)
-        except Exception:
+        except Exception as first_err:
+            # Log the first failure's context so the root cause isn't lost
+            # when the retry succeeds (previously the bare except swallowed it).
+            import sys
+            print(f"[memory_engine] _safe_chroma_query first attempt failed: "
+                  f"{type(first_err).__name__}: {first_err}; refreshing collection and retrying",
+                  file=sys.stderr)
             self._refresh_collection()
             return self.collection.query(**query_args)
 
@@ -324,12 +428,14 @@ class MemoryEngine(CodeQueryMixin):
                 self.cursor.execute("SELECT id, namespace, content, source, timestamp FROM memory_fts WHERE namespace = ?", (namespace,))
             
             rows = self.cursor.fetchall()
+            # Batch-prefetch stats for all rows (avoids N+1 _get_stats calls).
+            stats_map = self._get_stats_batch([r[0] for r in rows])
             results_list = []
             current_time = int(time.time())
             import math
             for row in rows:
                 doc_id, ns, content, source, timestamp = row
-                stats = self._get_stats(doc_id)
+                stats = stats_map.get(doc_id, {"access_count": 0, "is_pinned": False})
                 score = 1.0
                 if source == "snapshot":
                     score *= 1.5
@@ -415,8 +521,10 @@ class MemoryEngine(CodeQueryMixin):
         # 3. Apply Time Decay, Snapshot Boost, & Importance Scoring
         current_time = int(time.time())
         final_list = list(results.values())
+        # Batch-prefetch stats for all result ids (avoids N+1 _get_stats calls).
+        stats_map = self._get_stats_batch([item.id for item in final_list])
         for item in final_list:
-            stats = self._get_stats(item.id)
+            stats = stats_map.get(item.id, {"access_count": 0, "is_pinned": False})
             
             # Snapshots get a massive boost
             if item.source == "snapshot":
@@ -466,8 +574,8 @@ class MemoryEngine(CodeQueryMixin):
         original text verbatim if headroom is unavailable. Aggregate compression stats
         are written to self.last_pack_stats for the REST/MCP layer to surface a ratio.
         """
-        max_chars = max_tokens * 4
-
+        # Token budget tracked via litellm.token_counter (accurate for CJK).
+        # The prior max_chars = max_tokens * 4 over-estimated Chinese by ~4x.
         # Over-fetch slightly to ensure we have enough good candidates
         top_k_fetch = max(10, max_tokens // 50)
         results = self.hybrid_search(namespace, query, top_k=top_k_fetch)
@@ -484,7 +592,7 @@ class MemoryEngine(CodeQueryMixin):
                 "is available via headroom_retrieve(key) using its retrieve= attribute. -->\n"
             )
         packed_content = header
-        current_chars = len(packed_content) + len("</context>\n")
+        current_tokens = _count_tokens(packed_content) + _count_tokens("</context>\n")
         added_chunks = 0
         orig_tokens = 0
         comp_tokens = 0
@@ -504,11 +612,11 @@ class MemoryEngine(CodeQueryMixin):
                     retrieve_attr = f' retrieve="{c["key"]}"'
 
             block = f'  <memory source="{r.source}" relevance="{relevance}" age="{age}"{retrieve_attr}>\n{content_to_use}\n  </memory>\n'
-            block_len = len(block)
+            block_tokens = _count_tokens(block)
 
-            if current_chars + block_len <= max_chars:
+            if current_tokens + block_tokens <= max_tokens:
                 packed_content += block
-                current_chars += block_len
+                current_tokens += block_tokens
                 added_chunks += 1
                 # Record access for Importance Scoring
                 self.record_access(r.id)
@@ -667,24 +775,28 @@ Conversation:
 
     @db_lock
     def active_forgetting(self, namespace: str, max_capacity: int = 10000) -> int:
-        self.cursor.execute('SELECT id FROM memory_fts WHERE namespace=?', (namespace,))
+        # Single JOIN replaces the prior N+1 pattern (one _get_stats + one
+        # timestamp SELECT per memory). For 10k memories this drops ~20k
+        # round-trips down to one.
+        self.cursor.execute(
+            'SELECT m.id, m.timestamp, s.access_count, s.is_pinned '
+            'FROM memory_fts m '
+            'LEFT JOIN memory_stats s ON m.id = s.id '
+            'WHERE m.namespace = ?',
+            (namespace,)
+        )
         rows = self.cursor.fetchall()
         total_count = len(rows)
         if total_count <= max_capacity: return 0
         docs_to_delete = total_count - max_capacity
-        all_ids = [row[0] for row in rows]
         scored_items = []
         current_time = int(time.time())
         import math
-        for doc_id in all_ids:
-            stats = self._get_stats(doc_id)
-            if stats['is_pinned']: continue
-            self.cursor.execute('SELECT timestamp FROM memory_fts WHERE id=?', (doc_id,))
-            ts_row = self.cursor.fetchone()
-            if not ts_row: continue
-            timestamp = ts_row[0]
+        for doc_id, timestamp, access_count, is_pinned in rows:
+            if is_pinned: continue
+            if timestamp is None: continue
             score = 1.0
-            score *= (1.0 + 0.1 * math.log1p(stats['access_count']))
+            score *= (1.0 + 0.1 * math.log1p(access_count or 0))
             age_seconds = current_time - timestamp
             decay_factor = 0.5 ** (age_seconds / 2592000.0)
             score *= decay_factor
@@ -977,7 +1089,7 @@ Conversation:
         report("chroma", 0, total_units, "写入 ChromaDB 向量...")
         with_emb = [m for m in memories if m.get("embedding") is not None]
         without_emb = [m for m in memories if m.get("embedding") is None]
-        batch_size = 50
+        batch_size = 200
         for start in range(0, len(with_emb), batch_size):
             batch = with_emb[start:start + batch_size]
             self.collection.add(
@@ -1196,20 +1308,26 @@ Conversation:
 
     @db_lock
     def get_session_memories(self, session_id: str) -> List[Dict[str, Any]]:
+        # Single JOIN replaces the prior N+1 pattern (one SELECT per link).
         self.cursor.execute(
-            "SELECT memory_id, created_at FROM session_memories WHERE session_id=?",
+            "SELECT sm.memory_id, sm.created_at, m.content, m.source, m.timestamp "
+            "FROM session_memories sm "
+            "LEFT JOIN memory_fts m ON sm.memory_id = m.id "
+            "WHERE sm.session_id = ?",
             (session_id,)
         )
-        links = self.cursor.fetchall()
         result = []
-        for memory_id, linked_at in links:
-            self.cursor.execute(
-                "SELECT content, source, timestamp FROM memory_fts WHERE id=?",
-                (memory_id,)
-            )
-            row = self.cursor.fetchone()
-            if row:
-                result.append({"id": memory_id, "content": row[0], "source": row[1], "timestamp": row[2], "linked_at": linked_at})
+        for memory_id, linked_at, content, source, timestamp in self.cursor.fetchall():
+            if content is None:
+                # memory was deleted; keep the link record but skip it in results
+                continue
+            result.append({
+                "id": memory_id,
+                "content": content,
+                "source": source,
+                "timestamp": timestamp,
+                "linked_at": linked_at,
+            })
         return result
 
     @db_lock
@@ -1218,21 +1336,22 @@ Conversation:
         if not session:
             return "<context></context>"
 
-        max_chars = max_tokens * 4
         memories = self.get_session_memories(session_id)
         if not memories:
             return "<context></context>"
 
         packed_content = f'<context session_id="{session_id}">\n'
-        current_chars = len(packed_content) + len("</context>\n")
+        # Token budget tracked via litellm.token_counter (accurate for CJK);
+        # the prior max_chars = max_tokens * 4 over-estimated Chinese by ~4x.
+        current_tokens = _count_tokens(packed_content) + _count_tokens("</context>\n")
 
         for mem in memories:
             age = self._format_age(mem["timestamp"])
             block = f'  <memory source="{mem["source"]}" age="{age}">\n{mem["content"]}\n  </memory>\n'
-            block_len = len(block)
-            if current_chars + block_len <= max_chars:
+            block_tokens = _count_tokens(block)
+            if current_tokens + block_tokens <= max_tokens:
                 packed_content += block
-                current_chars += block_len
+                current_tokens += block_tokens
 
         packed_content += "</context>"
         return packed_content
@@ -1400,6 +1519,12 @@ Conversation:
 
     @staticmethod
     def _resolve_indexed_source_path(source_file: str, source_root: Optional[str] = None) -> Optional[str]:
+        # Defense against path traversal (see _allowed_source_roots docs).
+        # Reject `..` segments outright; the is_within_roots check below is
+        # the real boundary, but this catches the obvious case early.
+        if not source_file or ".." in Path(source_file).parts:
+            return None
+
         candidates = []
         if os.path.isabs(source_file):
             candidates.append(source_file)
@@ -1409,9 +1534,15 @@ Conversation:
             candidates.append(os.path.abspath(source_file))
             candidates.append(os.path.abspath(os.path.join(os.path.dirname(__file__), source_file)))
 
+        roots = _allowed_source_roots()
         for candidate in candidates:
-            if os.path.isfile(candidate):
-                return os.path.realpath(candidate)
+            if not os.path.isfile(candidate):
+                continue
+            resolved = os.path.realpath(candidate)
+            # Refuse to open paths that resolve outside every allowed root.
+            if not _is_within_roots(resolved, roots):
+                continue
+            return resolved
         return None
 
     @db_lock
@@ -1560,12 +1691,23 @@ Conversation:
                     "community_id": mrow[5],
                 }
 
+        # Pre-fetch stats for all returned ids in one query (avoids N+1
+        # _get_stats calls inside the node loop below).
+        stats_map: Dict[str, Dict] = {}
+        if node_id_list:
+            self.cursor.execute(
+                f'SELECT id, access_count, is_pinned FROM memory_stats WHERE id IN ({placeholders})',
+                node_id_list,
+            )
+            for srow in self.cursor.fetchall():
+                stats_map[srow[0]] = {"access_count": srow[1], "is_pinned": bool(srow[2])}
+
         nodes = []
         node_ids = set()
         for r in rows:
             node_id = r[0]
             node_ids.add(node_id)
-            stats = self._get_stats(node_id)
+            stats = stats_map.get(node_id, {"access_count": 0, "is_pinned": False})
             meta = meta_map.get(node_id, {})
             nodes.append({
                 "id": node_id,
@@ -1702,7 +1844,7 @@ Conversation:
 
         if chroma_ids:
             # Split into batches to provide progress updates and avoid timeout
-            batch_size = 50  # Reduced from 100 to 50 for more frequent updates
+            batch_size = 200  # Larger batch = fewer round-trips, better throughput
             total_batches = (len(chroma_ids) + batch_size - 1) // batch_size
 
             try:
@@ -1800,15 +1942,19 @@ Conversation:
         self.conn.commit()
         report_progress("metadata", len(node_meta), len(node_meta), "节点元数据写入完成")
 
-        # 5. Persist edges
+        # 5. Persist edges (batch — single executemany + one commit; replaces
+        # the prior N+1 pattern of one add_edge() call per edge, each doing
+        # its own INSERT + commit). For 10k edges this drops 10k commits to 1.
         report_progress("persist_edges", 0, len(resolved_edges), "持久化边关系...")
-        for idx, (from_id, to_id, relation, confidence) in enumerate(resolved_edges):
-            self.add_edge(from_id, to_id, relation, confidence)
-            edge_count += 1
-            if (idx + 1) % max(1, len(resolved_edges) // 10) == 0:
-                report_progress("persist_edges", idx + 1, len(resolved_edges), f"已写入 {idx + 1}/{len(resolved_edges)} 条边")
+        if resolved_edges:
+            self.cursor.executemany(
+                'INSERT OR REPLACE INTO memory_edges (from_id, to_id, relation_type, confidence, created_at) VALUES (?, ?, ?, ?, ?)',
+                [(from_id, to_id, relation, confidence, current_time) for (from_id, to_id, relation, confidence) in resolved_edges]
+            )
+            self.conn.commit()
+            edge_count = len(resolved_edges)
 
-        report_progress("persist_edges", len(resolved_edges), len(resolved_edges), "边关系持久化完成")
+        report_progress("persist_edges", edge_count, len(resolved_edges), f"已写入 {edge_count} 条边")
 
         return {
             "nodes_imported": node_count,

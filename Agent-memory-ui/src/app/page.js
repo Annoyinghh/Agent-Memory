@@ -8,6 +8,7 @@ import DigitalAvatar from '@/components/DigitalAvatar';
 import GalaxyView from '@/components/GalaxyView';
 import CodebaseIntel from '@/components/CodebaseIntel';
 import TutorialBook from '@/components/TutorialBook';
+import SimplifiedLayout from '@/components/SimplifiedLayout';
 
 export default function SPAHomepage() {
   const { 
@@ -22,7 +23,9 @@ export default function SPAHomepage() {
     setActiveTab, 
     refreshData,
     avatarMuted,
-    isGraphAvatarExpanded
+    isGraphAvatarExpanded,
+    isSimplified,
+    setIsSimplified
   } = useApp();
 
   // ────────────────────────────────────────────────────────
@@ -935,7 +938,9 @@ export default function SPAHomepage() {
     return 'hsl(var(--text-muted))';
   };
 
-  return (
+  return isSimplified ? (
+    <SimplifiedLayout />
+  ) : (
     <div className={`cockpit-container ${activeTab === 'graph' ? 'graph-mode' : ''}`}>
       <div className={`cockpit-layout-grid active-tab-${activeTab}`}>
         
@@ -994,12 +999,14 @@ export default function SPAHomepage() {
         {/* ============================================================ */}
         {/* CENTER COLUMN: Large Interactive Holographic Head            */}
         {/* ============================================================ */}
+        {!isSimplified && (
         <div className={`avatar-center-panel ${activeTab === 'graph' ? (isGraphAvatarExpanded ? 'graph-avatar-expanded' : 'graph-avatar-collapsed') : ''}`}>
           <div className="radar-background"></div>
           <div className="avatar-container-inner">
             <DigitalAvatar />
           </div>
         </div>
+        )}
 
         {/* ============================================================ */}
         {/* RIGHT COLUMN (40%): Dynamic Operations Panel                 */}
@@ -1009,12 +1016,15 @@ export default function SPAHomepage() {
           {/* TAB 1: DASHBOARD (STATISTICS) */}
           {activeTab === 'dashboard' && (
             <div className="tab-view-content fade-in-view" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <div className="quick-help-banner font-mono">
-                <span className="icon">📊</span>
+              <details className="quick-help-banner font-mono">
+                <summary>
+                  <span className="icon">📊</span>
+                  <strong>数据中心看板</strong>
+                </summary>
                 <div className="help-text">
-                  <strong>数据中心看板</strong>：监控本地系统的运行状态及命名空间。命名空间是记忆的“抽屉”，相互隔离。点击下方分区的<strong>“MOUNT_SECTOR_LOAD →”</strong>可快速挂载并跳转检索。
+                  监控本地系统的运行状态及命名空间。命名空间是记忆的“抽屉”，相互隔离。点击下方分区的<strong>“MOUNT_SECTOR_LOAD →”</strong>可快速挂载并跳转检索。
                 </div>
-              </div>
+              </details>
               <GlassCard title="内存容量分布占比 (Storage Distribution)" glowColor="purple" className="op-panel-card">
                 {namespacesList.length === 0 ? (
                   <div className="empty-sci-chart font-mono">[ WAITING_FOR_SYNC_DATA ]</div>
@@ -1197,15 +1207,18 @@ export default function SPAHomepage() {
           {/* TAB 2: SEARCH (QUERY ENGINE) */}
           {activeTab === 'search' && (
             <div className="tab-view-content fade-in-view" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <div className="quick-help-banner font-mono">
-                <span className="icon">🔍</span>
+              <details className="quick-help-banner font-mono">
+                <summary>
+                  <span className="icon">🔍</span>
+                  <strong>检索与打包工具</strong>
+                </summary>
                 <div className="help-text">
                   {searchSubMode === 'search' && <span><strong>混合检索</strong>：通过语义向量和精确关键字的混合算法，在底层记忆库中检索最相关的知识，支持直接编辑或删除底层节点。</span>}
                   {searchSubMode === 'pack' && <span><strong>上下文打包</strong>：模拟 AI 的上下文填充。在指定的 Token 预算内，自动打包最相关的知识，支持 headroom 语义压缩以塞入更多上下文。</span>}
                   {searchSubMode === 'source' && <span><strong>源码检索</strong>：对关联的代码仓库进行精准检索，直接定位函数、类定义并显示前后行号的源码片段。</span>}
                   {searchSubMode === 'compress' && <span><strong>语义压缩工具</strong>：对任意结构化文本或日志进行高比率的语义压缩（保留解压 Key，支持零损反向还原原文）。</span>}
                 </div>
-              </div>
+              </details>
               
               {/* Sub-mode Toggles */}
               <div className="sub-mode-toggle-bar font-mono">
@@ -1277,6 +1290,27 @@ export default function SPAHomepage() {
                   </svg>
                   COMPRESSION_TOOL // 压缩工具
                 </button>
+              </div>
+
+              {/* 💡 新手引导 — 检索工具选择指南 */}
+              <div style={{
+                padding: '12px 16px',
+                marginBottom: '16px',
+                background: 'linear-gradient(135deg, rgba(0,242,254,0.05) 0%, rgba(138,43,226,0.03) 100%)',
+                border: '1px solid rgba(0,242,254,0.12)',
+                borderRadius: '8px',
+                fontSize: '12px',
+                color: 'hsl(var(--text-muted))',
+                lineHeight: '1.8',
+                fontFamily: 'var(--font-mono)'
+              }}>
+                <div style={{ fontWeight: 'bold', color: 'hsl(var(--color-cyan))', marginBottom: '4px' }}>💡 四种检索工具 · 场景选择</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  <span>🔍 <strong>混合检索</strong> — 按语义相似度查找记忆块，适合问答和知识查找</span>
+                  <span>📦 <strong>上下文打包</strong> — 将相关记忆组装为 AI Prompt，适合为 LLM 提供上下文</span>
+                  <span>📂 <strong>源码检索</strong> — 在已导入的源码中搜索精确关键词（函数名、常量等）</span>
+                  <span>🗜️ <strong>压缩工具</strong> — 对长文本/日志/代码进行可逆语义压缩，节省 Token</span>
+                </div>
               </div>
 
               {searchSubMode === 'search' && (
@@ -1954,12 +1988,15 @@ export default function SPAHomepage() {
 
           {activeTab === 'ingest' && (
             <div className="tab-view-content fade-in-view" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <div className="quick-help-banner font-mono">
-                <span className="icon">📝</span>
+              <details className="quick-help-banner font-mono">
+                <summary>
+                  <span className="icon">📝</span>
+                  <strong>数据注入与快照</strong>
+                </summary>
                 <div className="help-text">
-                  <strong>数据注入与快照</strong>：向选定的命名空间导入外部记忆文本或代码资产（去重阈值大于 0 可防止重复导入相同知识）；快照冻结可将当前的认知数据固化，防止未来被遗忘机制清除。
+                  向选定的命名空间导入外部记忆文本或代码资产（去重阈值大于 0 可防止重复导入相同知识）；快照冻结可将当前的认知数据固化，防止未来被遗忘机制清除。
                 </div>
-              </div>
+              </details>
               <div className="ingest-tab-layout">
               {/* Form 1: Memory Ingestion */}
               <div className="ingest-column">
@@ -2012,6 +2049,7 @@ export default function SPAHomepage() {
                       value={insertSource}
                       onChange={(e) => setInsertSource(e.target.value)}
                       className="sci-control-input"
+                      placeholder="例如：user_manual、api_doc、chat_log、code_comment…"
                       required
                     />
                   </div>
@@ -2024,6 +2062,7 @@ export default function SPAHomepage() {
                       onChange={(e) => setInsertContent(e.target.value)}
                       className="sci-control-textarea"
                       rows="4"
+                      placeholder="输入要注入的知识文本，例如：项目配置信息、API 文档片段、代码逻辑说明…"
                       required
                     />
                   </div>
@@ -2114,6 +2153,7 @@ export default function SPAHomepage() {
                       onChange={(e) => setSnapshotSummary(e.target.value)}
                       className="sci-control-textarea"
                       rows="5"
+                      placeholder="描述当前项目阶段的关键状态，例如：已完成用户认证模块重构，数据库迁移脚本准备就绪，下一步计划实现缓存层…"
                       required
                     />
                   </div>
@@ -2133,12 +2173,15 @@ export default function SPAHomepage() {
         {/* TAB 4: MEMORY_LAYERS (分层记忆) */}
         {activeTab === 'memory' && (
           <div className="tab-view-content fade-in-view memory-tab-layout" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div className="quick-help-banner font-mono">
-              <span className="icon">🧠</span>
+            <details className="quick-help-banner font-mono">
+              <summary>
+                <span className="icon">🧠</span>
+                <strong>分层记忆管理</strong>
+              </summary>
               <div className="help-text">
-                <strong>分层记忆管理</strong>：管理 Agent 的短期内存和工作记忆（Working Memory）。短期记忆记录最近的交互轮次，可随时一键整合提炼（Consolidate）进长期记忆。
+                管理 Agent 的短期内存和工作记忆（Working Memory）。短期记忆记录最近的交互轮次，可随时一键整合提炼（Consolidate）进长期记忆。
               </div>
-            </div>
+            </details>
             {activeNamespace === 'all' ? (
               <div style={{ display: 'flex', justifyContent: 'center', padding: '40px', width: '100%' }}>
                 <GlassCard title="系统提示 // SYSTEM NOTICE" glowColor="purple" className="op-panel-card" style={{ maxWidth: '600px', width: '100%' }}>
@@ -2178,14 +2221,14 @@ export default function SPAHomepage() {
                           <div className="form-group-sci" style={{ marginBottom: 0 }}>
                             <label style={{ fontSize: '10px' }}>输入模拟对话内容</label>
                             <input
-                              type="text"
-                              value={newDialogContent}
-                              onChange={(e) => setNewDialogContent(e.target.value)}
-                              placeholder="键入一轮模拟的对话内容进行注入测试..."
-                              className="sci-control-input"
-                              style={{ padding: '6px 10px', fontSize: '11.5px', height: '34px' }}
-                              required
-                            />
+                                type="text"
+                                value={newDialogContent}
+                                onChange={(e) => setNewDialogContent(e.target.value)}
+                                placeholder="例如：当前任务目标是配置 Docker 的桥接网络，是否需要特权模式？"
+                                className="sci-control-input"
+                                style={{ padding: '6px 10px', fontSize: '11.5px', height: '34px' }}
+                                required
+                              />
                           </div>
                           <button type="submit" className="sci-submit-btn bg-cyan" disabled={addDialogLoading} style={{ padding: '0 16px', height: '34px', fontSize: '11px', whiteSpace: 'nowrap', flexShrink: 0, minWidth: '80px' }}>
                             {addDialogLoading ? '注入中...' : '注入对话'}
@@ -2407,12 +2450,15 @@ export default function SPAHomepage() {
         {/* TAB 5: SESSIONS (会话管理) */}
         {activeTab === 'sessions' && (
           <div className="tab-view-content fade-in-view" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div className="quick-help-banner font-mono">
-              <span className="icon">💬</span>
+            <details className="quick-help-banner font-mono">
+              <summary>
+                <span className="icon">💬</span>
+                <strong>全息会话隔离</strong>
+              </summary>
               <div className="help-text">
-                <strong>全息会话隔离</strong>：创建和管理独立的 Agent 交互会话。你可以在<strong>“知识检索”</strong>中将相关记忆一键关联（Link）到当前会话，确保 AI 在该会话内持续使用对应上下文。
+                创建和管理独立的 Agent 交互会话。你可以在<strong>“知识检索”</strong>中将相关记忆一键关联（Link）到当前会话，确保 AI 在该会话内持续使用对应上下文。
               </div>
-            </div>
+            </details>
             {activeNamespace === 'all' ? (
               <div style={{ display: 'flex', justifyContent: 'center', padding: '40px', width: '100%' }}>
                 <GlassCard title="系统提示 // SYSTEM NOTICE" glowColor="purple" className="op-panel-card" style={{ maxWidth: '600px', width: '100%' }}>
@@ -2552,7 +2598,7 @@ export default function SPAHomepage() {
                       <GlassCard title="关联记忆 (Linked Memories)" glowColor="purple" className="op-panel-card">
                         <form onSubmit={handleLinkMemory} className="sci-form" style={{ marginBottom: '12px' }}>
                           <div style={{ display: 'flex', gap: '8px' }}>
-                            <input type="text" value={linkMemoryId} onChange={(e) => setLinkMemoryId(e.target.value)} placeholder="输入记忆 ID 以关联..." className="sci-control-input" style={{ height: '30px', fontSize: '11px' }} required />
+                            <input type="text" value={linkMemoryId} onChange={(e) => setLinkMemoryId(e.target.value)} placeholder="输入记忆 ID（如 3f8a1b2c...）以关联到当前会话" className="sci-control-input" style={{ height: '30px', fontSize: '11px' }} required />
                             <button type="submit" className="sci-submit-btn bg-cyan" style={{ height: '30px', fontSize: '10px', whiteSpace: 'nowrap', minWidth: '60px' }}>
                               关联
                             </button>
@@ -2591,12 +2637,15 @@ export default function SPAHomepage() {
         {/* TAB 6: DECAY / FORGET (遗忘衰减) */}
         {activeTab === 'decay' && (
           <div className="tab-view-content fade-in-view" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div className="quick-help-banner font-mono">
-              <span className="icon">⏳</span>
+            <details className="quick-help-banner font-mono">
+              <summary>
+                <span className="icon">⏳</span>
+                <strong>遗忘衰减控制</strong>
+              </summary>
               <div className="help-text">
-                <strong>遗忘衰减控制</strong>：配置命名空间的记忆存活周期。低频被检索的记忆会随时间逐渐衰减重要性分值；当记忆库超载时，可触发主动遗忘以释放底层向量存储空间。
+                配置命名空间的记忆存活周期。低频被检索的记忆会随时间逐渐衰减重要性分值；当记忆库超载时，可触发主动遗忘以释放底层向量存储空间。
               </div>
-            </div>
+            </details>
             {activeNamespace === 'all' ? (
               <div style={{ display: 'flex', justifyContent: 'center', padding: '40px', width: '100%' }}>
                 <GlassCard title="系统提示 // SYSTEM NOTICE" glowColor="purple" className="op-panel-card" style={{ maxWidth: '600px', width: '100%' }}>
@@ -2754,6 +2803,7 @@ export default function SPAHomepage() {
                           accept=".gz"
                           onChange={(e) => setRestoreFile(e.target.files[0] || null)}
                           className="sci-control-input"
+                          title="选择之前导出的 .json.gz 备份文件。恢复操作会清空当前命名空间的所有数据，然后重新导入备份内容。"
                           style={{
                             padding: '6px 10px',
                             fontSize: '11px',
@@ -2916,7 +2966,7 @@ export default function SPAHomepage() {
         .cockpit-layout-grid.active-tab-decay .avatar-center-panel,
         .cockpit-layout-grid.active-tab-tutorial .avatar-center-panel {
           left: 0;
-          width: 320px;
+          width: clamp(360px, 32vw, 520px);
         }
 
         .cockpit-layout-grid.active-tab-search .operations-right-panel,
@@ -2925,8 +2975,8 @@ export default function SPAHomepage() {
         .cockpit-layout-grid.active-tab-sessions .operations-right-panel,
         .cockpit-layout-grid.active-tab-decay .operations-right-panel,
         .cockpit-layout-grid.active-tab-tutorial .operations-right-panel {
-          left: 344px;
-          width: calc(100% - 320px - 24px);
+          left: calc(clamp(360px, 32vw, 520px) + 24px);
+          width: calc(100% - clamp(360px, 32vw, 520px) - 24px);
         }
 
         /* Graph Tab Layout Overrides (Only Graph tab is modified!) */
@@ -3002,7 +3052,8 @@ export default function SPAHomepage() {
 
         .avatar-container-inner {
           width: 100%;
-          height: 100%;
+          flex: 1 1 0;
+          min-height: 0;
           z-index: 2;
           position: relative;
         }
@@ -3926,21 +3977,44 @@ export default function SPAHomepage() {
           box-shadow: 0 0 8px rgba(255, 102, 0, 0.25);
         }
 
-        /* Onboarding Quick Help Banner */
+        /* Onboarding Quick Help Banner (collapsible via <details>) */
         .quick-help-banner {
-          display: flex;
-          align-items: flex-start;
-          gap: 12px;
           background: rgba(255, 187, 0, 0.03);
           border: 1px solid rgba(255, 187, 0, 0.12);
           border-left: 3px solid #00f2fe;
           border-radius: 6px;
-          padding: 12px 16px;
           margin-bottom: 8px;
           font-size: 12px;
           line-height: 1.5;
           color: hsl(var(--text-muted));
           flex-shrink: 0;
+          overflow: hidden;
+        }
+
+        .quick-help-banner > summary {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 16px;
+          cursor: pointer;
+          list-style: none;
+          user-select: none;
+        }
+
+        .quick-help-banner > summary::-webkit-details-marker {
+          display: none;
+        }
+
+        .quick-help-banner > summary::after {
+          content: '▾';
+          margin-left: auto;
+          font-size: 10px;
+          color: hsl(var(--text-muted));
+          transition: transform 0.2s ease;
+        }
+
+        .quick-help-banner[open] > summary::after {
+          transform: rotate(180deg);
         }
 
         .quick-help-banner .icon {
@@ -3950,6 +4024,11 @@ export default function SPAHomepage() {
 
         .quick-help-banner strong {
           color: hsl(var(--text-primary));
+        }
+
+        .quick-help-banner .help-text {
+          padding: 4px 16px 10px 16px;
+          border-top: 1px dashed rgba(255, 187, 0, 0.08);
         }
 
 
