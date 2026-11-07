@@ -2,6 +2,7 @@
 const nextConfig = {
   // Produce a minimal self-contained server.js under .next/standalone for Docker.
   output: 'standalone',
+  devIndicators: false,
   allowedDevOrigins: ['127.0.0.1', 'localhost', '198.18.0.1'],
   // Reverse proxy: every /api/* the browser issues is forwarded server-side to the
   // backend over the compose internal network (service name `backend`). This keeps a

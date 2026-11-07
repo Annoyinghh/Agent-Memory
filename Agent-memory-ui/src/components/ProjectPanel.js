@@ -80,7 +80,7 @@ export default function ProjectPanel() {
   };
 
   return <div className="reading-column wide">
-    <article className="panel"><p className="eyebrow">INDEX YOUR PROJECT</p><h2>源码留在本机，知识持续更新。</h2>
+    <article className="panel"><h2>同步项目源码</h2>
       <p>增量同步保留未变化文件的索引。任务在后台执行，切换页面后可返回这里继续跟踪。</p>
       <form onSubmit={extract} className="form-stack">
         <label>项目空间<input required value={namespace} onChange={event => setNamespace(event.target.value)} placeholder="例如 order-service" /></label>

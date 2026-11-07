@@ -55,16 +55,17 @@ export default function GraphExplorer() {
         <option value="all">全部关系</option>{[...new Set(data.edges.map(edge => edge.relation))].map(type => <option key={type}>{type}</option>)}
       </select></label></div>
         {selected ? <svg viewBox="0 0 840 600" role="img" aria-label={`节点 ${label(selected)} 的关系图。节点也可以通过左侧列表选择。`}>
-          <defs><marker id="edge-arrow" markerWidth="8" markerHeight="8" refX="24" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#56837a" /></marker></defs>
+          <defs><marker id="edge-arrow" markerWidth="8" markerHeight="8" refX="24" refY="3" orient="auto"><path className="graph-arrow" d="M0,0 L0,6 L7,3 z" /></marker></defs>
           {edges.filter(edge => visible.has(edge.source) && visible.has(edge.target)).map((edge, index) => {
             const from = positions.get(edge.source), to = positions.get(edge.target);
-            return <g key={`${edge.source}:${edge.target}:${edge.relation}:${index}`}><line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#42635e" markerEnd="url(#edge-arrow)" /><title>{edge.relation}</title></g>;
+            return <g key={`${edge.source}:${edge.target}:${edge.relation}:${index}`}><line className="graph-edge" x1={from.x} y1={from.y} x2={to.x} y2={to.y} markerEnd="url(#edge-arrow)" /><title>{edge.relation}</title></g>;
           })}
           {[selected.id, ...neighbors].map(id => {
             const point = positions.get(id), node = byId.get(id);
-            return <g key={id} role="button" tabIndex={0} aria-label={`查看 ${label(node)}`} onClick={() => setSelectedId(id)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedId(id); } }} className="graph-node">
-              <circle cx={point.x} cy={point.y} r={id === selected.id ? 27 : 18} fill={id === selected.id ? '#80d9bf' : '#243b35'} stroke="#80d9bf" />
-              <text x={point.x} y={point.y + 43} textAnchor="middle" fill="#d6e5df" fontSize="12">{label(node).slice(0, 26)}</text><title>{label(node)}</title>
+            const isSelected = id === selected.id;
+            return <g key={id} role="button" tabIndex={0} aria-label={`查看 ${label(node)}`} onClick={() => setSelectedId(id)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedId(id); } }} className={isSelected ? 'graph-node selected' : 'graph-node'}>
+              <circle cx={point.x} cy={point.y} r={isSelected ? 27 : 18} />
+              <text x={point.x} y={point.y + 43} textAnchor="middle" fontSize="12">{label(node).slice(0, 26)}</text><title>{label(node)}</title>
             </g>;
           })}
         </svg> : <p className="empty-state">尚无索引数据。请先在「索引管理」建立项目索引。</p>}

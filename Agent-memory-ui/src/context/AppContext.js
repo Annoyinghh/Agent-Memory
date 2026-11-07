@@ -30,7 +30,7 @@ export function AppProvider({ children }) {
   const activeTab = TABS.has(preferences.tab) ? preferences.tab : 'code';
   const [stats, setStats] = useState({ total_chunks: 0, namespaces: {} });
   const namespaces = Object.keys(stats.namespaces || {});
-  const [isOnline, setIsOnline] = useState(false);
+  const [isOnline, setIsOnline] = useState(null);
   const [startingProjectTask, setStartingProjectTask] = useState(false);
 
   const savePreference = useCallback((key, value) => {

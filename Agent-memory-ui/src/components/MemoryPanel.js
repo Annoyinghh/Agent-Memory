@@ -36,7 +36,7 @@ function MemoryTools({ namespace, refreshData }) {
   return <>
     {error && <p className="notice error" role="alert">{error}</p>}
     <div className="tool-grid">
-      <article className="panel"><p className="eyebrow">RETRIEVE</p><h2>检索记忆与源码</h2>
+      <article className="panel"><h2>检索记忆与源码</h2>
         <form onSubmit={search} className="form-stack"><label>问题或关键词<input value={query} onChange={event => setQuery(event.target.value)} placeholder="留空可浏览当前空间的记忆" /></label>
           <div className="toolbar"><label>结果上限<select value={topK} onChange={event => setTopK(Number(event.target.value))}>{[5, 10, 20, 50].map(number => <option key={number}>{number}</option>)}</select></label>
             <button className="button" disabled={!!busy}>检索记忆</button><button className="button secondary" type="button" disabled={!!busy || !query.trim()} onClick={() => run('source', async () => setSourceResults((await api.preciseSourceSearch(namespace, query, topK, 4)).results || []))}>精确搜源码</button></div>
@@ -46,7 +46,7 @@ function MemoryTools({ namespace, refreshData }) {
         {results?.length === 0 && <p className="empty-state">没有匹配的记忆。</p>}
         {sourceResults && <div><h3>源码命中</h3>{sourceResults.length ? sourceResults.map((item, index) => <details key={index}><summary>{item.source_file} · {item.line_number || item.line || item.source_location}</summary><pre>{item.snippet || item.context || JSON.stringify(item, null, 2)}</pre></details>) : <p className="empty-state">索引关联源码中没有匹配项。</p>}</div>}
       </article>
-      <article className="panel"><p className="eyebrow">PACK CONTEXT</p><h2>按预算组装上下文</h2>
+      <article className="panel"><h2>按预算组装上下文</h2>
         <p>使用左侧问题检索记忆，以 XML 片段交给 Agent。完整源码仍按需读取。</p>
         <div className="form-stack"><label>Token 预算<input type="number" min="100" max="32000" value={budget} onChange={event => setBudget(Number(event.target.value))} /></label>
           <label className="checkbox-label"><input type="checkbox" checked={compress} onChange={event => setCompress(event.target.checked)} />启用可选压缩</label>
@@ -54,7 +54,7 @@ function MemoryTools({ namespace, refreshData }) {
           {output && <><pre>{output}</pre><button className="button secondary" onClick={() => run('copy', () => navigator.clipboard.writeText(output))}>复制上下文</button></>}
         </div>
       </article>
-      <article className="panel"><p className="eyebrow">REMEMBER</p><h2>保存项目知识</h2>
+      <article className="panel"><h2>保存项目知识</h2>
         <form className="form-stack" onSubmit={event => {
           event.preventDefault();
           run('insert', async () => { const value = await api.insert(target.trim(), content, source, 0.7); setOutput(`已保存：${value.id}`); setContent(''); await refreshData(); });
@@ -111,7 +111,7 @@ function CompressionTool() {
       if (value.key) setKey(value.key);
     } catch (error) { setError(error.message); } finally { setBusy(false); }
   };
-  return <article className="panel"><p className="eyebrow">OPTIONAL COMPRESSION</p><h2>压缩与原文取回</h2><p>压缩器不可用时返回原文；收益以实际返回结果为准。</p>
+  return <article className="panel"><h2>压缩与原文取回</h2><p>压缩器不可用时返回原文；收益以实际返回结果为准。</p>
     <label>待压缩文本<textarea rows="6" value={text} onChange={event => setText(event.target.value)} /></label>
     <button className="button secondary" disabled={busy || !text.trim()} onClick={() => run(false)}>压缩文本</button>
     <label>原文取回 Key<input value={key} onChange={event => setKey(event.target.value)} /></label>
