@@ -13,7 +13,7 @@ const RagShowcase = dynamic(() => import('./RagShowcase'), { loading });
 const VIEWS = [
   ['demo', '演示总览', ''],
   ['code', '代码分析', '查看项目架构、搜索符号、追踪调用和评估变更影响。'],
-  ['graph', '关系图谱', '查看节点之间的连接，回到源码核实。'],
+  ['graph', '星系图谱', '旋转源码星系，沿着节点关系回到源码。'],
   ['projects', '索引管理', '从本机源码建立索引，跟踪任务和管理备份。'],
   ['memory', '记忆工具', '检索和写入记忆，按预算组装上下文。'],
   ['sessions', '会话与工作记忆', '延续任务并维护临时上下文。'],
@@ -23,13 +23,13 @@ const VIEWS = [
 export default function Workspace() {
   const { activeNamespace, setActiveNamespace, activeTab, setActiveTab, namespaces, stats, isOnline } = useApp();
   const view = VIEWS.find(([key]) => key === activeTab) || VIEWS[0];
-  const needsProject = ['code', 'graph', 'sessions'].includes(activeTab) && activeNamespace === 'all';
+  const needsProject = ['code', 'sessions'].includes(activeTab) && activeNamespace === 'all';
   const engineStatus = isOnline === null ? '正在连接本地引擎' : isOnline ? '本地引擎已连接' : '本地引擎未连接';
 
-  return <div className={activeTab === 'demo' ? 'workbench showcase-workbench' : 'workbench'}>
+  return <div className="workbench">
     <a href="#workspace-content" className="skip-link">跳到工作区</a>
     <aside className="workspace-sidebar">
-      <div className="workspace-brand"><span className="brand-mark" aria-hidden="true">am</span><span>Agent Memory<small>本地代码工作台</small></span></div>
+      <div className="workspace-brand"><span className="brand-mark" aria-hidden="true">am</span><span>Agent Memory<small>本地代码导航</small></span></div>
       <nav aria-label="工作台导航">{VIEWS.map(([key, title]) =>
         <button key={key} onClick={() => setActiveTab(key)} aria-current={activeTab === key ? 'page' : undefined}>
           {title}
@@ -45,7 +45,7 @@ export default function Workspace() {
         {activeTab === 'demo' ? <p>{view[1]}</p> : <div><h1>{view[1]}</h1><p>{view[2]}</p></div>}
         {(namespaces.length > 0 || activeNamespace !== 'all') && <div className="project-selector"><label htmlFor="project">项目空间</label>
           <select id="project" value={activeNamespace} onChange={event => setActiveNamespace(event.target.value)}>
-            <option value="all">全部空间</option>
+            <option value="all">{activeTab === 'graph' ? '样例航区' : '全部空间'}</option>
             {namespaces.filter(name => name !== 'all').map(name => <option key={name}>{name}</option>)}
           </select>
         </div>}
@@ -89,7 +89,7 @@ export default function Workspace() {
 function Guide() {
   return <div className="reading-column">
     <article className="panel"><h2>在工作台查询源码</h2>
-      <ol><li>在「索引管理」填入本机项目绝对路径，建立增量索引。</li><li>选择项目空间，在「代码分析」查看架构、搜索符号或追踪调用链。</li><li>选择符号查看带行号的源码；在「关系图谱」检查关联。</li><li>修改代码后增量同步。未索引的关系和动态调用仍需通过源码与测试核实。</li></ol>
+      <ol><li>在「索引管理」填入本机项目绝对路径，建立增量索引。</li><li>选择项目空间，在「代码分析」查看架构、搜索符号或追踪调用链。</li><li>选择符号查看带行号的源码，在「星系图谱」检查关联。</li><li>修改代码后增量同步。未索引的关系和动态调用仍需通过源码与测试核实。</li></ol>
     </article>
     <article className="panel"><h2>通过 MCP 查询源码</h2>
       <pre>{`project_overview()

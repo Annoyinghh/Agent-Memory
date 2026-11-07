@@ -12,7 +12,7 @@ export default function DigitalAvatar() {
     const host = mount.current;
     let renderer;
     try {
-      renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+      renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'low-power' });
     } catch {
       const frame = requestAnimationFrame(() => setStatus('unavailable'));
       return () => cancelAnimationFrame(frame);
@@ -22,14 +22,14 @@ export default function DigitalAvatar() {
     const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 30);
     const head = new THREE.Group();
     head.rotation.y = -0.24;
-    scene.add(head, new THREE.HemisphereLight(0xffdc96, 0x221811, 2.1));
-    const key = new THREE.DirectionalLight(0xffdb9c, 3.7);
+    scene.add(head, new THREE.HemisphereLight(0xaddbff, 0x23194a, 1.7));
+    const key = new THREE.DirectionalLight(0x9adeff, 3.1);
     key.position.set(-3, 4, 5);
-    const rim = new THREE.DirectionalLight(0xffa13f, 4);
+    const rim = new THREE.DirectionalLight(0xb4a3ff, 4.8);
     rim.position.set(3, 0, -4);
     scene.add(key, rim);
 
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.domElement.setAttribute('aria-hidden', 'true');
     host.appendChild(renderer.domElement);
@@ -38,8 +38,11 @@ export default function DigitalAvatar() {
     let disposed = false;
     let visible = false;
     let ready = false;
+    let lastDraw = -Infinity;
     const draw = () => renderer.render(scene, camera);
     const animate = time => {
+      if (time - lastDraw < 31) return;
+      lastDraw = time;
       head.rotation.y = -0.24 + Math.sin(time / 2600) * 0.26;
       head.position.y = Math.sin(time / 1900) * 0.04;
       draw();
@@ -83,10 +86,10 @@ export default function DigitalAvatar() {
         const scale = 2.12 / geometry.boundingBox.getSize(new THREE.Vector3()).y;
         geometry.scale(scale, scale, scale);
         head.add(new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
-          color: 0xa87639, metalness: 0.52, roughness: 0.38,
+          color: 0x3678a8, emissive: 0x102e61, emissiveIntensity: 0.4, metalness: 0.48, roughness: 0.42,
         })));
         const lines = new THREE.LineSegments(new THREE.WireframeGeometry(geometry), new THREE.LineBasicMaterial({
-          color: 0xf7ca79, transparent: true, opacity: 0.13,
+          color: 0xa1e4ff, transparent: true, opacity: 0.24,
         }));
         lines.scale.setScalar(1.003);
         head.add(lines);
@@ -118,6 +121,7 @@ export default function DigitalAvatar() {
         object.material.dispose();
       }
       renderer.dispose();
+      renderer.forceContextLoss();
       renderer.domElement.remove();
     };
   }, []);
