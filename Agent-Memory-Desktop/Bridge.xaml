@@ -1,0 +1,210 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Agent Memory · 源码星系" Width="1250" Height="835" MinWidth="920" MinHeight="670"
+        WindowStartupLocation="CenterScreen" Background="#0B0F15" Foreground="#E8F2F6"
+        FontFamily="Microsoft YaHei UI, Segoe UI" FontSize="13">
+  <Window.Resources>
+    <SolidColorBrush x:Key="Muted" Color="#9CB0BC"/>
+    <SolidColorBrush x:Key="Aqua" Color="#A6E7E5"/>
+    <SolidColorBrush x:Key="Stroke" Color="#2B3B47"/>
+    <Style TargetType="Button">
+      <Setter Property="Background" Value="#192630"/>
+      <Setter Property="Foreground" Value="#E8F2F6"/>
+      <Setter Property="BorderBrush" Value="{StaticResource Stroke}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="14,6"/>
+      <Setter Property="Margin" Value="0,0,7,0"/>
+      <Setter Property="MinHeight" Value="34"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Chrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4">
+              <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="#A6E7E5"/></Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="#A6E7E5"/></Trigger>
+              <Trigger Property="IsPressed" Value="True"><Setter TargetName="Chrome" Property="Opacity" Value="0.75"/></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Chrome" Property="Opacity" Value="0.44"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="Primary" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+      <Setter Property="Background" Value="#FFC287"/>
+      <Setter Property="Foreground" Value="#2A170D"/>
+      <Setter Property="BorderBrush" Value="#FFD4AE"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+    <Style TargetType="TextBox">
+      <Setter Property="Background" Value="#0E1721"/>
+      <Setter Property="Foreground" Value="#E8F2F6"/>
+      <Setter Property="BorderBrush" Value="{StaticResource Stroke}"/>
+      <Setter Property="Padding" Value="8,5"/>
+      <Setter Property="CaretBrush" Value="{StaticResource Aqua}"/>
+    </Style>
+    <Style TargetType="ComboBox">
+      <Setter Property="MinHeight" Value="30"/>
+      <Setter Property="Foreground" Value="#E8F2F6"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ComboBox">
+            <Grid>
+              <ToggleButton Focusable="False" ClickMode="Press"
+                            IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                <ToggleButton.Template>
+                  <ControlTemplate TargetType="ToggleButton">
+                    <Border x:Name="Outline" Background="#0E1721" BorderBrush="#2B3B47" BorderThickness="1" CornerRadius="3">
+                      <Path Data="M0,0 L4,4 8,0" Stroke="#A6E7E5" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,9,0"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                      <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Outline" Property="BorderBrush" Value="#A6E7E5"/></Trigger>
+                      <Trigger Property="IsChecked" Value="True"><Setter TargetName="Outline" Property="BorderBrush" Value="#A6E7E5"/></Trigger>
+                    </ControlTemplate.Triggers>
+                  </ControlTemplate>
+                </ToggleButton.Template>
+              </ToggleButton>
+              <ContentPresenter IsHitTestVisible="False" VerticalAlignment="Center" Margin="9,0,25,0"
+                                Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"/>
+              <TextBlock x:Name="EmptySelection" Visibility="Collapsed" IsHitTestVisible="False" VerticalAlignment="Center"
+                         Margin="9,0,25,0" Foreground="{StaticResource Muted}"
+                         Text="{Binding Path=(AutomationProperties.Name), RelativeSource={RelativeSource TemplatedParent}}"/>
+              <Popup x:Name="PART_Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}" AllowsTransparency="True" Focusable="False">
+                <Border Background="#15212B" BorderBrush="#607986" BorderThickness="1"
+                        MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}">
+                  <ScrollViewer MaxHeight="280" CanContentScroll="True">
+                    <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/>
+                  </ScrollViewer>
+                </Border>
+              </Popup>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="SelectedIndex" Value="-1"><Setter TargetName="EmptySelection" Property="Visibility" Value="Visible"/></Trigger>
+              <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter Property="Foreground" Value="#FFD49C"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+      <Setter Property="ItemContainerStyle">
+        <Setter.Value>
+          <Style TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="#E8F2F6"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Style.Triggers>
+              <Trigger Property="IsHighlighted" Value="True"><Setter Property="Background" Value="#34545F"/></Trigger>
+            </Style.Triggers>
+          </Style>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="Code" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+      <Setter Property="FontFamily" Value="Cascadia Mono, Consolas"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="IsReadOnly" Value="True"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+      <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+    </Style>
+    <Style TargetType="TabItem">
+      <Setter Property="Foreground" Value="#A9BDD0"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="TabItem">
+            <Border x:Name="TabFace" BorderThickness="0,0,0,2" BorderBrush="Transparent"
+                    Background="Transparent" Padding="15,7" Margin="0,0,4,0">
+              <ContentPresenter ContentSource="Header" RecognizesAccessKey="True"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="TabFace" Property="Background" Value="#192739"/></Trigger>
+              <Trigger Property="IsSelected" Value="True">
+                <Setter Property="Foreground" Value="#FFD49C"/>
+                <Setter TargetName="TabFace" Property="BorderBrush" Value="#FFC287"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="TabFace" Property="Background" Value="#23374D"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </Window.Resources>
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="65"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="30"/>
+    </Grid.RowDefinitions>
+    <Border BorderBrush="#202E40" BorderThickness="0,0,0,1" Background="#090E17">
+      <DockPanel Margin="23,0" LastChildFill="False">
+        <StackPanel DockPanel.Dock="Left" VerticalAlignment="Center">
+          <TextBlock Text="AGENT MEMORY" Foreground="#9ABCD5" FontSize="10" FontFamily="Consolas"/>
+          <TextBlock Text="源码星系" FontSize="22" FontWeight="SemiBold"/>
+        </StackPanel>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+          <TextBlock x:Name="EngineState" Text="正在连接" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,14,0"/>
+          <ComboBox x:Name="Projects" AutomationProperties.Name="项目空间" Width="150" Margin="0,0,8,0"/>
+          <ComboBox x:Name="Nodes" AutomationProperties.Name="节点目录" IsSynchronizedWithCurrentItem="False" Width="165" Margin="0,0,8,0"/>
+          <Button x:Name="Reload" Content="刷新"/>
+          <Button x:Name="OpenIndex" Content="索引项目" Margin="0"/>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+    <Grid Grid.Row="1" ClipToBounds="True">
+      <Grid.Background>
+        <RadialGradientBrush Center="0.5,0.51" GradientOrigin="0.5,0.51" RadiusX="0.57" RadiusY="0.82">
+          <GradientStop Color="#132741" Offset="0"/>
+          <GradientStop Color="#090F1D" Offset="0.55"/>
+          <GradientStop Color="#04060D" Offset="1"/>
+        </RadialGradientBrush>
+      </Grid.Background>
+      <Grid x:Name="GalaxyStage" ClipToBounds="True"/>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,23,16">
+        <Button x:Name="ZoomOut" Content="−" FontSize="17" AutomationProperties.Name="缩小星系"/>
+        <Button x:Name="ZoomIn" Content="+" FontSize="17" AutomationProperties.Name="放大星系"/>
+        <Button x:Name="ResetCamera" Content="复位" Margin="0"/>
+      </StackPanel>
+      <TextBlock Text="拖动旋转  /  滚轮缩放  /  点选代码星标" Foreground="#A4B8CC" FontSize="12"
+                 HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="24,0,0,23" IsHitTestVisible="False"/>
+    </Grid>
+    <Border x:Name="Details" Grid.Row="2" Visibility="Collapsed" Height="268" Background="#0B111B"
+            BorderBrush="#3B526B" BorderThickness="0,1,0,0" Padding="23,10,23,0">
+      <DockPanel>
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,3">
+          <Button x:Name="CloseDetails" DockPanel.Dock="Right" Content="收起详情" Margin="12,0,0,0"/>
+          <StackPanel>
+            <TextBlock x:Name="DetailTitle" FontFamily="Cascadia Mono, Consolas" FontSize="18" Foreground="#FFD49C" TextTrimming="CharacterEllipsis"/>
+            <TextBlock x:Name="DetailLocation" Foreground="{StaticResource Muted}" FontSize="12" TextTrimming="CharacterEllipsis"/>
+          </StackPanel>
+        </DockPanel>
+        <TabControl x:Name="DetailTabs" Background="#0B111B" Foreground="#E8F2F6" BorderThickness="0"
+                    Padding="0,5,0,0" AutomationProperties.Name="节点详情">
+          <TabItem Header="代码详情">
+            <TextBox x:Name="SourceText" Style="{StaticResource Code}" AutomationProperties.Name="源码证据"/>
+          </TabItem>
+          <TabItem Header="AI 看到什么">
+            <DockPanel>
+              <DockPanel x:Name="QueryRow" DockPanel.Dock="Top" Margin="0,0,0,5">
+                <Button x:Name="RunQuery" DockPanel.Dock="Right" Content="检索并打包 XML" Style="{StaticResource Primary}" Margin="7,0,0,0"/>
+                <TextBox x:Name="Query" AutomationProperties.Name="检索问题" VerticalContentAlignment="Center"/>
+              </DockPanel>
+              <TextBlock x:Name="AgentTitle" DockPanel.Dock="Top" Foreground="{StaticResource Aqua}"
+                         Margin="0,0,0,5" TextTrimming="CharacterEllipsis"/>
+              <TextBox x:Name="AgentText" Style="{StaticResource Code}" AutomationProperties.Name="Agent 原始工具数据"/>
+            </DockPanel>
+          </TabItem>
+          <TabItem Header="用人话解释">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+              <TextBlock x:Name="MeaningText" Margin="0,6,12,8" Foreground="#DBE6F1" FontSize="14"
+                         TextWrapping="Wrap" LineHeight="24" AutomationProperties.Name="代码的通俗解释"/>
+            </ScrollViewer>
+          </TabItem>
+        </TabControl>
+      </DockPanel>
+    </Border>
+    <Border Grid.Row="3" Background="#090E17" BorderBrush="#202E40" BorderThickness="0,1,0,0">
+      <TextBlock x:Name="Status" Foreground="{StaticResource Muted}" FontSize="11" VerticalAlignment="Center"
+                 Margin="23,0" TextTrimming="CharacterEllipsis"/>
+    </Border>
+  </Grid>
+</Window>

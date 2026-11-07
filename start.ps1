@@ -1,6 +1,7 @@
 param(
     [switch]$Check,
     [switch]$Stop,
+    [switch]$BackendOnly,
     [string]$PythonPath = $env:MEMORY_PYTHON,
     [ValidateRange(1,65535)][int]$BackendPort = 8900,
     [ValidateRange(1,65535)][int]$FrontendPort = 3000
@@ -97,21 +98,25 @@ try {
     $env:PYTHONIOENCODING = 'utf-8'
     & $pythonBin (Join-Path $projectRoot 'Agent-Memory-Server\check_environment.py')
     if ($LASTEXITCODE -ne 0) { throw 'Backend dependencies are missing. Install Agent-Memory-Server/requirements.txt using this interpreter.' }
-    $nodeBin = (Get-Command node -ErrorAction Stop).Source
-    $nodeVersion = (& $nodeBin --version).TrimStart('v')
-    if ($LASTEXITCODE -ne 0 -or [version]$nodeVersion -lt [version]'20.9') { throw 'Next.js requires Node.js 20.9 or later.' }
-    $nextBin = Join-Path $projectRoot 'Agent-memory-ui\node_modules\next\dist\bin\next'
-    if (-not (Test-Path -LiteralPath $nextBin)) { throw 'Frontend dependencies missing; run npm ci in Agent-memory-ui.' }
     Write-Host "Python: $pythonBin"
-    Write-Host "Node: $nodeBin"
+    if (-not $BackendOnly) {
+        $nodeBin = (Get-Command node -ErrorAction Stop).Source
+        $nodeVersion = (& $nodeBin --version).TrimStart('v')
+        if ($LASTEXITCODE -ne 0 -or [version]$nodeVersion -lt [version]'20.9') { throw 'Next.js requires Node.js 20.9 or later.' }
+        $nextBin = Join-Path $projectRoot 'Agent-memory-ui\node_modules\next\dist\bin\next'
+        if (-not (Test-Path -LiteralPath $nextBin)) { throw 'Frontend dependencies missing; run npm ci in Agent-memory-ui.' }
+        Write-Host "Node: $nodeBin"
+    }
     if ($Check) {
         Write-Host 'Preflight passed. No services started.'
         exit 0
     }
     foreach ($entry in $saved) { if (Is-OwnedProcess $entry) { throw 'Project is already running. Use stop.bat first.' } }
-    if ($BackendPort -eq $FrontendPort) { throw 'Backend and frontend ports must differ.' }
     Assert-FreePort $BackendPort
-    Assert-FreePort $FrontendPort
+    if (-not $BackendOnly) {
+        if ($BackendPort -eq $FrontendPort) { throw 'Backend and frontend ports must differ.' }
+        Assert-FreePort $FrontendPort
+    }
     $backendDir = Join-Path $projectRoot 'Agent-Memory-Server'
     $frontendDir = Join-Path $projectRoot 'Agent-memory-ui'
     $env:NEXT_PUBLIC_API_URL = "http://127.0.0.1:$BackendPort"
@@ -120,6 +125,10 @@ try {
     $started += @{name='backend';pid=$backend.Id;startTicks=$backend.StartTime.ToUniversalTime().Ticks.ToString();root=$projectRoot}
     Save-State $started
     Wait-Service "http://127.0.0.1:$BackendPort/health" $backend 45
+    if ($BackendOnly) {
+        Write-Host "Engine ready: http://127.0.0.1:$BackendPort. Stop with stop.bat."
+        exit 0
+    }
     $frontend = Start-Process -FilePath $nodeBin -ArgumentList @(('"'+$nextBin+'"'),'dev','--hostname','127.0.0.1','--port',"$FrontendPort") -WorkingDirectory $frontendDir -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $runtimeDir 'frontend.out.log') -RedirectStandardError (Join-Path $runtimeDir 'frontend.err.log')
     $started += @{name='frontend';pid=$frontend.Id;startTicks=$frontend.StartTime.ToUniversalTime().Ticks.ToString();root=$projectRoot}
     Save-State $started
