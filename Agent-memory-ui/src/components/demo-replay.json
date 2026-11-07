@@ -1,0 +1,17 @@
+{
+  "query": "CODEBASE_SOURCE_ROOTS 如何限制索引目录？",
+  "budget": 900,
+  "hits": [
+    {
+      "id": "8",
+      "source": "source_files.py:8-12",
+      "content": "def allowed_source_roots() -> list[str]:\n    configured = os.environ.get(\"CODEBASE_SOURCE_ROOTS\", \"\").split(\",\")\n    roots = [part.strip() for part in configured if part.strip()]\n    roots.extend([\"/workspace\", str(Path(__file__).absolute().parent.parent)])\n    return list(dict.fromkeys(os.path.realpath(root) for root in roots))"
+    },
+    {
+      "id": "15",
+      "source": "source_files.py:15-23",
+      "content": "def is_within_roots(resolved_path: str, roots: list[str]) -> bool:\n    \"\"\"Check a canonical path against canonical roots, including on Windows.\"\"\"\n    for root in roots:\n        try:\n            if os.path.commonpath([resolved_path, root]) == root:\n                return True\n        except ValueError:\n            # Windows paths on different drives have no common path.\n            continue"
+    }
+  ],
+  "context": "<context>\n  <memory source=\"source_files.py:8-12\" relevance=\"high\" age=\"just now\">\ndef allowed_source_roots() -> list[str]:\n    configured = os.environ.get(\"CODEBASE_SOURCE_ROOTS\", \"\").split(\",\")\n    roots = [part.strip() for part in configured if part.strip()]\n    roots.extend([\"/workspace\", str(Path(__file__).absolute().parent.parent)])\n    return list(dict.fromkeys(os.path.realpath(root) for root in roots))\n  </memory>\n  <memory source=\"source_files.py:15-23\" relevance=\"high\" age=\"just now\">\ndef is_within_roots(resolved_path: str, roots: list[str]) -> bool:\n    \"\"\"Check a canonical path against canonical roots, including on Windows.\"\"\"\n    for root in roots:\n        try:\n            if os.path.commonpath([resolved_path, root]) == root:\n                return True\n        except ValueError:\n            # Windows paths on different drives have no common path.\n            continue\n  </memory>\n</context>"
+}

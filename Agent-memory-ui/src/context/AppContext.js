@@ -6,7 +6,7 @@ import { api } from '@/lib/api';
 const AppContext = createContext(null);
 const KEY = 'agent-memory:workspace';
 const CHANGE = 'agent-memory:preferences';
-const TABS = new Set(['code', 'graph', 'projects', 'memory', 'sessions', 'guide']);
+const TABS = new Set(['demo', 'code', 'graph', 'projects', 'memory', 'sessions', 'guide']);
 let volatilePreferences = '';
 let storageDisabled = false;
 
@@ -27,7 +27,7 @@ export function AppProvider({ children }) {
   const snapshot = useSyncExternalStore(subscribe, readPreferences, () => '');
   const preferences = parsePreferences(snapshot);
   const activeNamespace = preferences.namespace || 'all';
-  const activeTab = TABS.has(preferences.tab) ? preferences.tab : 'code';
+  const activeTab = TABS.has(preferences.tab) ? preferences.tab : 'demo';
   const [stats, setStats] = useState({ total_chunks: 0, namespaces: {} });
   const namespaces = Object.keys(stats.namespaces || {});
   const [isOnline, setIsOnline] = useState(null);

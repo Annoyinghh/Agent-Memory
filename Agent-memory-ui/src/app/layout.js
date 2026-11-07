@@ -1,4 +1,5 @@
 import './workspace.css';
+import './showcase.css';
 import { AppProvider } from '@/context/AppContext';
 
 export const metadata = {

@@ -4,6 +4,7 @@
 
 ## 从源码到证据
 
+- **演示**：打开「演示总览」查看原版 3D 数字人和检索回放。回放来自隔离索引和测试向量。选中已索引的项目空间后，可输入自己的问题，实时查看召回片段和发给 Agent 的上下文。
 - **人**：打开工作台 →「索引管理」填写项目路径和空间名 → 增量同步 →「代码分析」搜索符号或追踪调用 → 点击符号查看源码。「关系图谱」展示有上限的局部样本；完整符号搜索在「代码分析」。
 - **AI**：用 `project_overview` 发现空间，`get_architecture` 理解结构，`search_graph` 定位符号，`trace_path` 看关系，`get_code_snippet` 读证据。查询时带明确 `namespace`，控制分页和深度。同名符号按候选项中的精确节点 ID 再查询。
 - **维护索引**：有改动时优先增量同步。MCP 显式传 `sync_codebase(target_dir=..., namespace=..., incremental=True)`；大型项目可以从「索引管理」后台运行并查看任务 ID。需要全文或语义记忆时用 `hybrid_search` / `pack_context`。
@@ -242,7 +243,7 @@ docker exec agent-memory-backend python backup_cli.py restore --in /app/data/bac
 
 ### 常见问题
 
-- **全息人头 / 图标消失**：前端 standalone 镜像必须带 `public/`——人头模型 `female_head_final.glb` 和各 SVG 图标都在里面（`DigitalAvatar` 用 `GLTFLoader` 加载 `/female_head_final.glb`）。Dockerfile 已用 `COPY ... /app/public` 处理；若删掉这步，`/female_head_final.glb` 返回 404，人头加载失败消失。Next.js standalone **不会自动拷贝 `public/`**，必须手动 COPY。
+- **全息数字人加载失败**：模型 `female_head_final.glb` 在 `public/`，演示页通过 `GLTFLoader` 加载。前端 standalone 镜像需要保留 Dockerfile 中 `public/` 的复制步骤。实时渲染需要浏览器支持 WebGL 2。
 - **改了 `.env` 不生效**：`PROTECTED_NAMESPACES` / LLM key 等运行时变量 `docker compose up -d`（重建容器）即可生效。`NEXT_PUBLIC_*` 类（本项目不使用）才需 `--build` 重建镜像。
 - **MCP 工具报错找不到**：先确认镜像已构建（`docker images | grep agent-memory-server`），且 MCP 配置里的卷路径是**绝对路径**、指向真实存在的 `data/` 目录。
 - **改后端代码不生效 / 镜像还是旧的**：Docker Desktop 的 BuildKit 偶尔会对 `COPY` 层命中缓存、吃不到代码改动。改了 `Agent-Memory-Server/*.py` 后若发现行为没变，用 `docker compose build --no-cache backend` 强制重建。

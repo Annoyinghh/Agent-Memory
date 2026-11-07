@@ -8,8 +8,10 @@ const CodebaseIntel = dynamic(() => import('./CodebaseIntel'), { loading });
 const GraphExplorer = dynamic(() => import('./GraphExplorer'), { loading });
 const ProjectPanel = dynamic(() => import('./ProjectPanel'), { loading });
 const MemoryPanel = dynamic(() => import('./MemoryPanel'), { loading });
+const RagShowcase = dynamic(() => import('./RagShowcase'), { loading });
 
 const VIEWS = [
+  ['demo', '演示总览', ''],
   ['code', '代码分析', '查看项目架构、搜索符号、追踪调用和评估变更影响。'],
   ['graph', '关系图谱', '查看节点之间的连接，回到源码核实。'],
   ['projects', '索引管理', '从本机源码建立索引，跟踪任务和管理备份。'],
@@ -24,7 +26,7 @@ export default function Workspace() {
   const needsProject = ['code', 'graph', 'sessions'].includes(activeTab) && activeNamespace === 'all';
   const engineStatus = isOnline === null ? '正在连接本地引擎' : isOnline ? '本地引擎已连接' : '本地引擎未连接';
 
-  return <div className="workbench">
+  return <div className={activeTab === 'demo' ? 'workbench showcase-workbench' : 'workbench'}>
     <a href="#workspace-content" className="skip-link">跳到工作区</a>
     <aside className="workspace-sidebar">
       <div className="workspace-brand"><span className="brand-mark" aria-hidden="true">am</span><span>Agent Memory<small>本地代码工作台</small></span></div>
@@ -39,15 +41,15 @@ export default function Workspace() {
       </div>
     </aside>
     <main id="workspace-content" className="workspace-main">
-      <header className="workspace-header">
-        <div><h1>{view[1]}</h1><p>{view[2]}</p></div>
+      {(activeTab !== 'demo' || namespaces.length > 0) && <header className="workspace-header">
+        {activeTab === 'demo' ? <p>{view[1]}</p> : <div><h1>{view[1]}</h1><p>{view[2]}</p></div>}
         {(namespaces.length > 0 || activeNamespace !== 'all') && <div className="project-selector"><label htmlFor="project">项目空间</label>
           <select id="project" value={activeNamespace} onChange={event => setActiveNamespace(event.target.value)}>
             <option value="all">全部空间</option>
             {namespaces.filter(name => name !== 'all').map(name => <option key={name}>{name}</option>)}
           </select>
         </div>}
-      </header>
+      </header>}
       {isOnline === false && <p className="notice" role="status">引擎尚未连接。请运行项目根目录的 start.bat 或 docker compose up -d。</p>}
       <section key={`${activeTab}:${activeNamespace}`} className="workspace-content" aria-label={view[1]}>
         {needsProject && (namespaces.length > 0 ? <div className="panel project-picker">
@@ -71,6 +73,7 @@ export default function Workspace() {
           </div>
         </div>)}
         {!needsProject && <>
+          {activeTab === 'demo' && <RagShowcase />}
           {activeTab === 'code' && <CodebaseIntel />}
           {activeTab === 'graph' && <GraphExplorer />}
           {activeTab === 'projects' && <ProjectPanel />}

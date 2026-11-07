@@ -51,11 +51,15 @@ export default function GraphExplorer() {
         </button>)}</div>
         {!filteredNodes.length && <p className="empty-state">样本中无匹配项。可在「代码分析」搜索整个索引。</p>}
       </aside>
-      <div className="panel graph-canvas"><div className="toolbar"><h2>局部连接</h2><label>关系类型<select value={relation} onChange={event => setRelation(event.target.value)}>
+      <div className="panel graph-canvas"><div className="toolbar"><h2>关系星图</h2><label>关系类型<select value={relation} onChange={event => setRelation(event.target.value)}>
         <option value="all">全部关系</option>{[...new Set(data.edges.map(edge => edge.relation))].map(type => <option key={type}>{type}</option>)}
       </select></label></div>
-        {selected ? <svg viewBox="0 0 840 600" role="img" aria-label={`节点 ${label(selected)} 的关系图。节点也可以通过左侧列表选择。`}>
+        {selected ? <svg className="graph-sky" viewBox="0 0 840 600" role="img" aria-label={`节点 ${label(selected)} 的关系图。节点也可以通过左侧列表选择。`}>
           <defs><marker id="edge-arrow" markerWidth="8" markerHeight="8" refX="24" refY="3" orient="auto"><path className="graph-arrow" d="M0,0 L0,6 L7,3 z" /></marker></defs>
+          <g className="graph-orbits" aria-hidden="true">
+            <ellipse cx="420" cy="300" rx="145" ry="115" />
+            <ellipse cx="420" cy="300" rx="290" ry="230" />
+          </g>
           {edges.filter(edge => visible.has(edge.source) && visible.has(edge.target)).map((edge, index) => {
             const from = positions.get(edge.source), to = positions.get(edge.target);
             return <g key={`${edge.source}:${edge.target}:${edge.relation}:${index}`}><line className="graph-edge" x1={from.x} y1={from.y} x2={to.x} y2={to.y} markerEnd="url(#edge-arrow)" /><title>{edge.relation}</title></g>;

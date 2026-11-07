@@ -138,14 +138,16 @@ ol { padding-left: 22px; color: var(--muted); }
 .node-list strong, .node-list small { display: block; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .node-list small { font-size: 9px; margin-top: 4px; }
 .graph-canvas svg { width: 100%; max-height: 620px; }
+.graph-sky { display: block; border-radius: 5px; background: radial-gradient(ellipse at center, #302316, #171411 76%); }
+.graph-orbits { fill: none; stroke: #c89d5540; stroke-dasharray: 3 7; }
 .graph-node { cursor: pointer; }
 .graph-node:focus { outline: none; }
-.graph-edge { stroke: var(--control-border); }
-.graph-arrow { fill: var(--control-border); }
-.graph-node circle { fill: var(--accent-wash); stroke: var(--accent); }
-.graph-node.selected circle { fill: var(--accent); }
-.graph-node text { fill: var(--ink); }
-.graph-node:focus-visible circle { stroke: var(--ink); stroke-width: 4px; }
+.graph-edge { stroke: #b58a54; }
+.graph-arrow { fill: #b58a54; }
+.graph-node circle { fill: #382817; stroke: #eebc74; }
+.graph-node.selected circle { fill: #eebc74; }
+.graph-node text { fill: #faf0df; }
+.graph-node:focus-visible circle { stroke: #faf0df; stroke-width: 4px; }
 .relationship-list { display: flex; gap: 8px; flex-wrap: wrap; }
 .source-reader { white-space: pre; }
 .skip-link { position: fixed; left: 12px; top: -100px; z-index: 100; background: var(--accent); color: var(--accent-ink); padding: 8px 16px; }
@@ -185,8 +187,8 @@ ol { padding-left: 22px; color: var(--muted); }
   .workbench { --gutter: 18px; display: block; }
   .workspace-sidebar { position: static; height: auto; gap: 10px 16px; padding: 14px var(--gutter); display: grid; grid-template-columns: 1fr auto; align-items: center; }
   .workspace-brand { padding: 0; }
-  .workspace-sidebar nav { grid-column: 1 / -1; grid-row: 2; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .workspace-sidebar nav button { font-size: 13px; min-height: 38px; padding: 6px; }
+  .workspace-sidebar nav { grid-column: 1 / -1; grid-row: 2; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .workspace-sidebar nav button { font-size: 12px; line-height: 1.35; min-height: 38px; padding: 6px; }
   .workspace-status { margin: 0; border: 0; padding: 0; }
   .workspace-header { padding-block: 22px 18px; }
   .workspace-content { padding-top: 18px; }
