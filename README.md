@@ -1,6 +1,14 @@
 # Agent Memory System
 
-为 AI Agent 提供持久化记忆的混合检索系统。支持语义向量搜索 + 关键词精确匹配，通过 REST API 和 MCP 协议接入任意 AI 工具。
+本地代码智能与 Agent 记忆。索引源码后，人可以在工作台浏览架构、符号、调用关系和带行号的源码；AI 通过 MCP 查询同一份索引。项目经验、会话和工作记忆也可以保存，并按需检索或打包。
+
+## 从源码到证据
+
+- **人**：打开工作台 →「索引管理」填写项目路径和空间名 → 增量同步 →「代码分析」搜索符号或追踪调用 → 点击符号查看源码。「关系图谱」展示有上限的局部样本；完整符号搜索在「代码分析」。
+- **AI**：用 `project_overview` 发现空间，`get_architecture` 理解结构，`search_graph` 定位符号，`trace_path` 看关系，`get_code_snippet` 读证据。查询时带明确 `namespace`，控制分页和深度。同名符号按候选项中的精确节点 ID 再查询。
+- **维护索引**：有改动时优先增量同步。MCP 显式传 `sync_codebase(target_dir=..., namespace=..., incremental=True)`；大型项目可以从「索引管理」后台运行并查看任务 ID。需要全文或语义记忆时用 `hybrid_search` / `pack_context`。
+
+参考 [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) 的图查询优先思路。结构化查询来自本地静态索引；源码、配置和测试用于验证动态行为。部署和原有 REST/MCP 工具说明见下文。
 
 ## 架构
 
@@ -31,8 +39,8 @@
 ### 环境要求
 
 - Python 3.11+
-- Node.js 18+
-- Conda 环境 `agent-memory`（或自行修改 `start.bat` 中的 Python 路径）
+- Node.js 20.9+
+- Windows 启动器优先查找项目 `.venv`，也可设置 `MEMORY_PYTHON` 指向已安装依赖的解释器。
 
 ### 安装依赖
 
@@ -404,7 +412,7 @@ args = [
 | GET | `/api/graph/node/{node_id}` | 获取节点详情（含所有边） |
 | POST | `/api/graph/path` | 查找两个节点间的最短路径 |
 | GET | `/api/graph/stats` | 图谱统计（节点数、边数、关系类型） |
-| GET | `/api/graph/data?namespace=` | 获取图谱全量数据（可视化用） |
+| GET | `/api/graph/data?namespace=&limit=200` | 获取有限节点及其关联（可视化用） |
 | POST | `/api/graph/import` | 批量导入图谱数据 |
 | POST | `/api/graph/extract` | Graphify AST 提取并导入（**后台任务**，返回 `task_id`；`rebuild=true` 先清空再全量提取；`incremental=true` 只更新变化文件） |
 | POST | `/api/graph/clear` | 清空 namespace 的整个图谱（节点+边+向量），用于同步前清理 |
@@ -778,16 +786,16 @@ Agent-Memory/
 └── Agent-memory-ui/             # Next.js 前端
     ├── Dockerfile               # 前端镜像（standalone 多阶段构建）
     ├── next.config.mjs          # output:standalone + /api 反向代理 rewrites
-    ├── src/app/page.js          # 主页面
+    ├── src/app/page.js          # 工作台入口
     ├── src/lib/api.js           # API 客户端（相对路径 BASE_URL）
     ├── src/context/AppContext.js # 全局状态
-    └── src/components/          # UI 组件
+    └── src/components/          # 代码分析、关系图谱、索引和记忆面板
 ```
 
 ## 技术栈
 
 - **后端**：Python / FastAPI / MCP / ChromaDB / SQLite FTS5 / LiteLLM / Graphify (tree-sitter AST)
-- **前端**：Next.js 16 / React 19 / Three.js / Tailwind CSS
+- **前端**：Next.js 16 / React 19 / 原生 SVG 和 CSS
 
 ## 开发路线图
 

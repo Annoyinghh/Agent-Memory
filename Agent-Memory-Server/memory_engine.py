@@ -1,13 +1,16 @@
 import sqlite3
 import time
 import os
-from pathlib import Path
 import chromadb
 import litellm
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 import threading
 import functools
+import logging
+from retrieval import lexical_query, reciprocal_rank_fusion, relevance_label, MAX_RESULTS, MAX_CANDIDATES
+from vector_sync import VectorSyncMixin
+from source_files import read_source_snippet, resolve_indexed_source_path
 
 # Optional headroom-backed reversible compression (graceful no-op if unavailable).
 # Imported defensively so a compression-module issue can never break the engine.
@@ -28,51 +31,6 @@ def db_lock(func):
         with self.lock:
             return func(self, *args, **kwargs)
     return wrapper
-
-
-# ── Source-path confinement (path-traversal defense) ──────────────────────
-# _resolve_indexed_source_path resolves graph_nodes.source_file to a real on-disk
-# path. Without confinement, an attacker who calls /api/graph/import with a
-# crafted source_file ("../../etc/passwd") can read arbitrary files: the snippet
-# is stored as a memory and returned by /api/memory/search. These helpers limit
-# resolution to an allowlist of roots.
-#
-# Default roots:
-#   - /workspace                  (Docker code-repo mount point)
-#   - engine file's parent dir   (local-dev relative paths)
-# Extend via CODEBASE_SOURCE_ROOTS env var (comma-separated absolute paths).
-def _allowed_source_roots() -> List[str]:
-    roots: List[str] = []
-    env_roots = os.environ.get("CODEBASE_SOURCE_ROOTS", "")
-    for r in env_roots.split(","):
-        r = r.strip()
-        if r:
-            roots.append(os.path.realpath(r))
-    # /workspace is the default Docker mount point for the code repo.
-    roots.append(os.path.realpath("/workspace"))
-    # Engine's parent dir enables local-dev relative paths.
-    roots.append(os.path.realpath(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    # Dedupe while preserving order.
-    seen = set()
-    out = []
-    for r in roots:
-        if r not in seen:
-            seen.add(r)
-            out.append(r)
-    return out
-
-
-def _is_within_roots(path: str, roots: List[str]) -> bool:
-    """True if `path` is at or under one of `roots`. Caller must realpath the
-    path first. Uses commonpath to be symlink-safe."""
-    for root in roots:
-        try:
-            if os.path.commonpath([path, root]) == root:
-                return True
-        except ValueError:
-            # Different drives (Windows) or other commonpath failure — skip.
-            continue
-    return False
 
 
 def _count_tokens(text: str) -> int:
@@ -99,13 +57,16 @@ class MemoryItem(BaseModel):
     source: str
     timestamp: int
     score: float = 1.0
+    score_kind: str = "importance"
+    relevance: str = "high"
+    channels: List[str] = []
 
-class MemoryEngine(CodeQueryMixin):
+class MemoryEngine(CodeQueryMixin, VectorSyncMixin):
     # Anchor default data dir to THIS file's location so every entry point
     # (REST API, MCP server, CLI) reads/writes the SAME database regardless of cwd.
     _DEFAULT_DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
-    def __init__(self, db_dir: str = None):
+    def __init__(self, db_dir: str = None, *, embedding_function=None):
         # Only accept absolute paths verbatim. Any relative path (incl. "./data")
         # is treated as a bare filename and resolved against the engine's own dir,
         # so a stray empty data/ can never be created or read from the wrong cwd.
@@ -139,14 +100,20 @@ class MemoryEngine(CodeQueryMixin):
         self._chroma_path = os.path.join(db_dir, "chroma_db")
         self.chroma_client = chromadb.PersistentClient(path=self._chroma_path)
         # We use a single collection, filtering by namespace via metadata
-        self.collection = self.chroma_client.get_or_create_collection(name="agent_memory")
+        self._embedding_function = embedding_function
+        embedding_options = {"embedding_function": embedding_function} if embedding_function is not None else {}
+        self.collection = self.chroma_client.get_or_create_collection(name="agent_memory", **embedding_options)
         
         # 3. Initialize Volatile Short-term Memory
         self.short_term_window_size = 10
         self._short_term_memory: Dict[str, List[Dict[str, Any]]] = {}
 
         # 4. Protected namespaces (read-only, no insert/update/delete)
-        self.protected_namespaces: set = set()
+        self.protected_namespaces: set = {ns.strip() for ns in os.environ.get("PROTECTED_NAMESPACES", "").split(",") if ns.strip()}
+
+    def _check_writable(self, namespace: str) -> None:
+        if self.is_protected(namespace):
+            raise PermissionError(f"Namespace '{namespace}' is protected (read-only)")
 
     def protect_namespace(self, namespace: str) -> None:
         self.protected_namespaces.add(namespace)
@@ -159,6 +126,11 @@ class MemoryEngine(CodeQueryMixin):
 
     @db_lock
     def _init_sqlite(self):
+        # Additive, idempotent migration; no changes to the existing FTS schema.
+        self.cursor.execute('''CREATE TABLE IF NOT EXISTS vector_sync_jobs (
+            doc_id TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT
+        )''')
         # Create FTS5 virtual table. FTS5 doesn't strictly support filtering by non-text columns efficiently 
         # out of the box, but we can store namespace and source as text and filter during the query.
         self.cursor.execute('''
@@ -256,6 +228,7 @@ class MemoryEngine(CodeQueryMixin):
     @db_lock
     def insert_memory(self, doc_id: str, namespace: str, content: str, source: str, dedup_threshold: float = 0.0) -> str:
         """Insert a memory chunk into both SQLite and ChromaDB, with optional deduplication."""
+        self._check_writable(namespace)
         
         # 0. Deduplication Check
         if dedup_threshold > 0.0:
@@ -277,28 +250,23 @@ class MemoryEngine(CodeQueryMixin):
                 
                 if similarity >= dedup_threshold:
                     # It's a duplicate. Instead of inserting, update the existing one.
-                    self.update_memory(existing_id, namespace, content, source)
-                    return existing_id
+                    if self.update_memory(existing_id, namespace, content, source):
+                        return existing_id
 
         current_time = int(time.time())
         
-        # 1. Insert into SQLite
-        self.cursor.execute(
-            "INSERT INTO memory_fts (id, namespace, content, source, timestamp) VALUES (?, ?, ?, ?, ?)",
-            (doc_id, namespace, content, source, current_time)
-        )
-        self.cursor.execute(
-            "INSERT OR IGNORE INTO memory_stats (id, access_count, is_pinned) VALUES (?, 0, 0)",
-            (doc_id,)
-        )
-        self.conn.commit()
-
-        # 2. Insert into ChromaDB
-        self.collection.add(
-            documents=[content],
-            metadatas=[{"namespace": namespace, "source": source, "timestamp": current_time}],
-            ids=[doc_id]
-        )
+        # Serialize ID checks across processes. Source + repair job commit together.
+        with self.conn:
+            self.conn.execute("BEGIN IMMEDIATE")
+            if self.conn.execute("SELECT 1 FROM memory_fts WHERE id=?", (doc_id,)).fetchone():
+                raise ValueError("Memory ID already exists; use update_memory")
+            self.cursor.execute(
+                "INSERT INTO memory_fts (id,namespace,content,source,timestamp) VALUES (?,?,?,?,?)",
+                (doc_id, namespace, content, source, current_time),
+            )
+            self.cursor.execute("INSERT OR IGNORE INTO memory_stats(id) VALUES (?)", (doc_id,))
+            self._queue_vector_sync([doc_id])
+        self.sync_vector_index(ids=[doc_id])
         
         return doc_id
 
@@ -313,24 +281,42 @@ class MemoryEngine(CodeQueryMixin):
     @db_lock
     def update_memory(self, doc_id: str, namespace: str, content: str, source: str) -> bool:
         """Update an existing memory chunk in both SQLite and ChromaDB."""
+        self._check_writable(namespace)
         current_time = int(time.time())
-
-        # 1. Update in SQLite (FTS5 doesn't support UPDATE easily, so we DELETE then INSERT)
-        self.cursor.execute("DELETE FROM memory_fts WHERE id = ?", (doc_id,))
-        self.cursor.execute(
-            "INSERT INTO memory_fts (id, namespace, content, source, timestamp) VALUES (?, ?, ?, ?, ?)",
-            (doc_id, namespace, content, source, current_time)
-        )
-        self.conn.commit()
-
-        # 2. Update in ChromaDB
-        self.collection.update(
-            ids=[doc_id],
-            documents=[content],
-            metadatas=[{"namespace": namespace, "source": source, "timestamp": current_time}]
-        )
+        with self.conn:
+            self.conn.execute("BEGIN IMMEDIATE")
+            rows = self.conn.execute("SELECT namespace FROM memory_fts WHERE id=?", (doc_id,)).fetchall()
+            if len(rows) != 1 or rows[0][0] != namespace:
+                return False
+            self.cursor.execute("DELETE FROM memory_fts WHERE id=? AND namespace=?", (doc_id, namespace))
+            self.cursor.execute(
+                "INSERT INTO memory_fts (id,namespace,content,source,timestamp) VALUES (?,?,?,?,?)",
+                (doc_id, namespace, content, source, current_time),
+            )
+            self._queue_vector_sync([doc_id])
+        self.sync_vector_index(ids=[doc_id])
         
         return True
+
+    @db_lock
+    def delete_memory(self, namespace: str, doc_id: str = None, source_prefix: str = None) -> int:
+        self._check_writable(namespace)
+        if not doc_id and not source_prefix:
+            raise ValueError("Must provide doc_id or source_prefix")
+        with self.conn:
+            self.conn.execute("BEGIN IMMEDIATE")
+            if doc_id:
+                rows = self.conn.execute("SELECT id FROM memory_fts WHERE namespace=? AND id=?", (namespace, doc_id))
+            else:
+                # A literal prefix: '%' and '_' in paths are not SQL wildcards.
+                rows = self.conn.execute(
+                    "SELECT id FROM memory_fts WHERE namespace=? AND substr(source,1,length(?))=?",
+                    (namespace, source_prefix, source_prefix),
+                )
+            ids = [r[0] for r in rows]
+            self._delete_nodes_by_ids(ids)
+        self.sync_vector_index(ids=ids)
+        return len(ids)
 
     # =========================================================
     # Importance Scoring Operations
@@ -396,7 +382,8 @@ class MemoryEngine(CodeQueryMixin):
         default embedding function.
         """
         self.chroma_client = chromadb.PersistentClient(path=self._chroma_path)
-        self.collection = self.chroma_client.get_or_create_collection(name="agent_memory")
+        embedding_options = {"embedding_function": self._embedding_function} if self._embedding_function is not None else {}
+        self.collection = self.chroma_client.get_or_create_collection(name="agent_memory", **embedding_options)
 
     def _safe_chroma_query(self, query_args: dict):
         """collection.query with one refresh+retry to heal a stale handle.
@@ -417,9 +404,15 @@ class MemoryEngine(CodeQueryMixin):
             self._refresh_collection()
             return self.collection.query(**query_args)
 
-    @db_lock
     def hybrid_search(self, namespace: str, query: str, top_k: int = 5) -> List[MemoryItem]:
-        """Perform Hybrid Search: Keyword (FTS5) + Semantic (Chroma)."""
+        return self.search_with_diagnostics(namespace, query, top_k)[0]
+
+    @db_lock
+    def search_with_diagnostics(self, namespace: str, query: str, top_k: int = 5):
+        """BM25 + dense RRF; diagnostics belong to THIS request, not global state."""
+        top_k = max(0, min(int(top_k), MAX_RESULTS))
+        if top_k == 0:
+            return [], {"method": "rrf", "degraded_channels": []}
         if not query or query == "__all__" or query.strip() == "":
             # Return all memories of this namespace sorted by current decay score
             if namespace == "all":
@@ -456,97 +449,89 @@ class MemoryEngine(CodeQueryMixin):
                 ))
             # Sort by score descending (highest first)
             results_list.sort(key=lambda x: x.score, reverse=True)
-            return results_list[:top_k]
+            for item in results_list:
+                item.relevance = relevance_label(item.score, item.score_kind)
+            return results_list[:top_k], {"method": "importance", "degraded_channels": []}
 
-        results: Dict[str, MemoryItem] = {}
-        
-        # 1. FTS5 Exact Match Search
-        try:
-            if namespace == "all":
-                fts_query = f'content:"{query}"'
-            else:
-                fts_query = f'namespace:"{namespace}" AND content:"{query}"'
-                
-            self.cursor.execute(
-                "SELECT id, namespace, content, source, timestamp FROM memory_fts WHERE memory_fts MATCH ? LIMIT ?", 
-                (fts_query, top_k * 2)
-            )
-            for row in self.cursor.fetchall():
-                doc_id = row[0]
-                results[doc_id] = MemoryItem(
-                    id=doc_id,
-                    namespace=row[1],
-                    content=row[2],
-                    source=row[3],
-                    timestamp=int(row[4]),
-                    score=1.0 # FTS match gets base score 1.0
-                )
-        except sqlite3.OperationalError:
-            pass # Ignore malformed FTS query issues
+        method = os.environ.get("MEMORY_SEARCH_MODE", "rrf").lower()
+        if method not in {"rrf", "bm25", "dense"}:
+            raise ValueError("MEMORY_SEARCH_MODE must be rrf, bm25 or dense")
+        limit = min(MAX_CANDIDATES, max(20, top_k * 4))
+        candidates = {}
+        rankings = {"fts": [], "vector": []}
+        degraded = []
+        expression = lexical_query(query)
+        if expression and method != "dense":
+            try:
+                sql = "SELECT id,namespace,content,source,timestamp FROM memory_fts WHERE memory_fts MATCH ?"
+                params = ["content : (" + expression + ")"]
+                if namespace != "all":
+                    sql += " AND namespace=?"
+                    params.append(namespace)
+                sql += " ORDER BY bm25(memory_fts), id LIMIT ?"
+                params.append(limit)
+                for row in self.conn.execute(sql, params):
+                    candidates[row[0]] = row
+                    rankings["fts"].append(row[0])
+            except sqlite3.OperationalError as exc:
+                degraded.append("fts")
+                logging.getLogger(__name__).warning("Lexical retrieval failed (%s)", type(exc).__name__)
 
-        # 2. Chroma Vector Search
-        query_args = {
-            "query_texts": [query],
-            "n_results": top_k * 2
-        }
+        args = {"query_texts": [query], "n_results": limit}
         if namespace != "all":
-            query_args["where"] = {"namespace": namespace}
-            
-        vector_results = self._safe_chroma_query(query_args)
+            args["where"] = {"namespace": namespace}
+        try:
+            vector_results = self._safe_chroma_query(args) if method != "bm25" else None
+            if vector_results and vector_results.get('ids'):
+                ids = vector_results['ids'][0]
+                docs = (vector_results.get('documents') or [[]])[0]
+                # Do not trust vector metadata/content as the source of truth.
+                # Pending, deleted, stale and foreign-namespace vectors cannot
+                # contribute rank evidence, even if returned by a broken index.
+                for idx, doc_id in enumerate(ids):
+                    if idx >= len(docs):
+                        continue
+                    row = self.conn.execute(
+                        "SELECT id,namespace,content,source,timestamp FROM memory_fts "
+                        "WHERE id=? AND NOT EXISTS (SELECT 1 FROM vector_sync_jobs WHERE doc_id=?)",
+                        (doc_id, doc_id),
+                    ).fetchone()
+                    if row and row[2] == docs[idx] and (namespace == "all" or row[1] == namespace):
+                        candidates[doc_id] = row
+                        rankings["vector"].append(doc_id)
+        except Exception as exc:
+            degraded.append("vector")
+            logging.getLogger(__name__).warning("Vector retrieval failed; using lexical results (%s)", type(exc).__name__)
 
-        if vector_results and vector_results['ids'] and len(vector_results['ids']) > 0:
-            ids = vector_results['ids'][0]
-            docs = vector_results['documents'][0]
-            metas = vector_results['metadatas'][0]
-            distances = vector_results['distances'][0]
-            
-            for i, doc_id in enumerate(ids):
-                # Distance to score (closer to 0 is better in Chroma L2, so we invert)
-                # Max distance is usually around 1-2. Let's do a simple inversion:
-                semantic_score = max(0.0, 1.0 - (distances[i] / 2.0))
-                
-                if doc_id in results:
-                    # Boost score if both found
-                    results[doc_id].score += semantic_score
-                else:
-                    results[doc_id] = MemoryItem(
-                        id=doc_id,
-                        namespace=metas[i].get("namespace", namespace),
-                        content=docs[i],
-                        source=metas[i].get("source", "unknown"),
-                        timestamp=int(metas[i].get("timestamp", 0)),
-                        score=semantic_score
-                    )
-
-        # 3. Apply Time Decay, Snapshot Boost, & Importance Scoring
-        current_time = int(time.time())
-        final_list = list(results.values())
-        # Batch-prefetch stats for all result ids (avoids N+1 _get_stats calls).
-        stats_map = self._get_stats_batch([item.id for item in final_list])
-        for item in final_list:
-            stats = stats_map.get(item.id, {"access_count": 0, "is_pinned": False})
-            
-            # Snapshots get a massive boost
-            if item.source == "snapshot":
-                item.score *= 1.5
-                
-            # Access count boost: log(1 + access_count) to smooth out extreme values
-            import math
-            item.score *= (1.0 + 0.1 * math.log1p(stats["access_count"]))
-            
-            # Pinned boost
-            if stats["is_pinned"]:
-                item.score *= 2.0
-                
-            # Time decay: reduce score slightly for older items
-            # e.g., half-life of 30 days (2592000 seconds)
-            age_seconds = current_time - item.timestamp
-            decay_factor = 0.5 ** (age_seconds / 2592000.0)
-            item.score *= decay_factor
-
-        # 4. Sort by final score
-        final_list.sort(key=lambda x: x.score, reverse=True)
-        return final_list[:top_k]
+        selected = rankings if method == "rrf" else {"fts" if method == "bm25" else "vector": rankings["fts" if method == "bm25" else "vector"]}
+        scores = reciprocal_rank_fusion(selected)
+        stats = self._get_stats_batch(list(scores))
+        # Importance only breaks exact rank-score ties. It cannot overpower
+        # relevance or make old but still valid code disappear from search.
+        ordered = sorted(scores, key=lambda doc_id: (
+            -scores[doc_id],
+            -int(stats.get(doc_id, {}).get("is_pinned", False)),
+            -min(stats.get(doc_id, {}).get("access_count", 0), 100),
+            doc_id,
+        ))
+        items = []
+        for doc_id in ordered:
+            rows = self.conn.execute(
+                "SELECT id,namespace,content,source,timestamp FROM memory_fts WHERE id=?", (doc_id,)
+            ).fetchall()
+            if len(rows) != 1 or rows[0] != candidates[doc_id]:
+                continue  # changed/deleted by another process during retrieval
+            row = rows[0]
+            score = scores[doc_id]
+            items.append(MemoryItem(
+                id=row[0], namespace=row[1], content=row[2], source=row[3], timestamp=int(row[4]),
+                score=score, score_kind="rrf", relevance=relevance_label(score, "rrf"),
+                channels=[channel for channel, ids in selected.items() if doc_id in ids],
+            ))
+            if len(items) >= top_k:
+                break
+        return items, {"method": method, "degraded_channels": degraded,
+                       "pending_vectors": self.pending_vector_sync()}
 
     def _format_age(self, timestamp: int) -> str:
         diff = int(time.time()) - timestamp
@@ -599,7 +584,7 @@ class MemoryEngine(CodeQueryMixin):
 
         for r in results:
             age = self._format_age(r.timestamp)
-            relevance = self._get_relevance(r.score)
+            relevance = r.relevance
 
             content_to_use = r.content
             retrieve_attr = ""
@@ -775,6 +760,7 @@ Conversation:
 
     @db_lock
     def active_forgetting(self, namespace: str, max_capacity: int = 10000) -> int:
+        self._check_writable(namespace)
         # Single JOIN replaces the prior N+1 pattern (one _get_stats + one
         # timestamp SELECT per memory). For 10k memories this drops ~20k
         # round-trips down to one.
@@ -804,11 +790,9 @@ Conversation:
         scored_items.sort(key=lambda x: x['score'])
         delete_ids = [item['id'] for item in scored_items[:docs_to_delete]]
         if delete_ids:
-            placeholders = ','.join(['?'] * len(delete_ids))
-            self.cursor.execute(f'DELETE FROM memory_fts WHERE id IN ({placeholders})', delete_ids)
-            self.cursor.execute(f'DELETE FROM memory_stats WHERE id IN ({placeholders})', delete_ids)
+            self._delete_nodes_by_ids(delete_ids)
             self.conn.commit()
-            self.collection.delete(ids=delete_ids)
+            self.sync_vector_index(ids=delete_ids)
         return len(delete_ids)
 
     @db_lock
@@ -819,12 +803,14 @@ Conversation:
         (sync) so re-extraction does not pile duplicates on top of the old
         graph. Returns the number of nodes removed.
         """
+        self._check_writable(namespace)
         self.cursor.execute("SELECT id FROM memory_fts WHERE namespace=?", (namespace,))
         ids = [row[0] for row in self.cursor.fetchall()]
         if not ids:
             return 0
         removed = self._delete_nodes_by_ids(ids)
         self.conn.commit()
+        self.sync_vector_index(ids=ids)
         return removed
 
     def _delete_nodes_by_ids(self, ids):
@@ -835,8 +821,7 @@ Conversation:
         """
         if not ids:
             return 0
-        for i in range(0, len(ids), 500):
-            self.collection.delete(ids=ids[i:i + 500])
+        self._queue_vector_sync(ids)
         # SQLite caps the number of bound variables per statement (default 999,
         # up to 32766). A large namespace yields 20k+ ids — the edges delete
         # alone would bind 40k. Batch every delete in chunks of 500 so we never
@@ -853,6 +838,7 @@ Conversation:
             self.cursor.execute(f"DELETE FROM graph_nodes WHERE id IN ({ph})", chunk)
             self.cursor.execute(f"DELETE FROM memory_stats WHERE id IN ({ph})", chunk)
             self.cursor.execute(f"DELETE FROM memory_fts WHERE id IN ({ph})", chunk)
+            self.cursor.execute(f"DELETE FROM session_memories WHERE memory_id IN ({ph})", chunk)
         return len(ids)
 
     @db_lock
@@ -863,6 +849,7 @@ Conversation:
         graph_manifest). Used by restore so an import is a faithful REPLACE,
         not a union with whatever was there before. Returns node count removed.
         """
+        self._check_writable(namespace)
         self.cursor.execute("SELECT id FROM memory_fts WHERE namespace=?", (namespace,))
         ids = [row[0] for row in self.cursor.fetchall()]
         self.cursor.execute("SELECT id FROM memory_sessions WHERE namespace=?", (namespace,))
@@ -879,6 +866,7 @@ Conversation:
         self.cursor.execute("DELETE FROM memory_sessions WHERE namespace=?", (namespace,))
         self.cursor.execute("DELETE FROM graph_manifest WHERE namespace=?", (namespace,))
         self.conn.commit()
+        self.sync_vector_index(ids=ids)
         return removed
 
     @db_lock
@@ -915,17 +903,21 @@ Conversation:
         # very large namespaces). include=["embeddings"] pulls the stored vector
         # back out verbatim.
         emb_map = {}
+        content_map = {row[0]: row[1] for row in fts_rows}
+        pending_ids = {row[0] for row in self.conn.execute("SELECT doc_id FROM vector_sync_jobs")}
         for i in range(0, len(ids), 500):
             batch = ids[i:i + 500]
             try:
-                got = self.collection.get(ids=batch, include=["embeddings"])
+                got = self.collection.get(ids=batch, include=["embeddings", "documents"])
             except Exception:
                 got = {}
             got_ids = got.get("ids") or []
             got_embs = got.get("embeddings")
             if got_embs is None:
                 got_embs = []
-            for bid, emb in zip(got_ids, got_embs):
+            for bid, emb, document in zip(got_ids, got_embs, got.get("documents") or []):
+                if bid in pending_ids or document != content_map.get(bid):
+                    continue  # restore will regenerate a current vector
                 # Normalize to a plain Python float list: chroma may hand back
                 # numpy arrays, which json.dumps cannot serialize.
                 emb_map[bid] = [float(x) for x in emb] if emb is not None else None
@@ -1054,6 +1046,13 @@ Conversation:
             raise ValueError("Backup has no namespace and no target_namespace given")
 
         memories = data.get("memories", [])
+        self._check_writable(target)
+        memory_ids = [m["id"] for m in memories]
+        if len(memory_ids) != len(set(memory_ids)):
+            raise ValueError("Backup contains duplicate memory IDs")
+        for doc_id in memory_ids:
+            if self.conn.execute("SELECT 1 FROM memory_fts WHERE id=? AND namespace<>?", (doc_id, target)).fetchone():
+                raise ValueError("Backup IDs collide with another namespace; restore requires distinct IDs")
         total_units = len(memories) or 1
         report("clear", 0, 1, f"清空目标 namespace '{target}'...")
         self.clear_namespace_all(target)
@@ -1078,6 +1077,7 @@ Conversation:
                 "INSERT OR REPLACE INTO memory_stats (id, access_count, is_pinned) VALUES (?, ?, ?)",
                 stats_rows,
             )
+            self._queue_vector_sync(memory_ids)
             self.conn.commit()
         report("sqlite", total_units, total_units, "FTS + stats 写入完成")
 
@@ -1092,13 +1092,8 @@ Conversation:
         batch_size = 200
         for start in range(0, len(with_emb), batch_size):
             batch = with_emb[start:start + batch_size]
-            self.collection.add(
-                ids=[m["id"] for m in batch],
-                documents=[m.get("content", "") for m in batch],
-                metadatas=[{"namespace": target, "source": m.get("source", ""),
-                            "timestamp": m.get("timestamp", 0)} for m in batch],
-                embeddings=[m["embedding"] for m in batch],
-            )
+            self.sync_vector_index(limit=200, ids=[m["id"] for m in batch],
+                                   embeddings={m["id"]: (m.get("content", ""), m["embedding"]) for m in batch})
             # Free this batch's float lists now that chroma has them.
             for m in batch:
                 m["embedding"] = None
@@ -1107,12 +1102,7 @@ Conversation:
         # Fall back: memories whose vector was missing in the export get embedded now.
         for start in range(0, len(without_emb), batch_size):
             batch = without_emb[start:start + batch_size]
-            self.collection.add(
-                ids=[m["id"] for m in batch],
-                documents=[m.get("content", "") for m in batch],
-                metadatas=[{"namespace": target, "source": m.get("source", ""),
-                            "timestamp": m.get("timestamp", 0)} for m in batch],
-            )
+            self.sync_vector_index(limit=200, ids=[m["id"] for m in batch])
         report("chroma", total_units, total_units, "ChromaDB 写入完成")
 
         # 3. graph nodes (preserve community_id / external_id), edges, manifest
@@ -1195,8 +1185,10 @@ Conversation:
             [*source_files, namespace],
         )
         ids = [row[0] for row in self.cursor.fetchall()]
+        self._check_writable(namespace)
         removed = self._delete_nodes_by_ids(ids)
         self.conn.commit()
+        self.sync_vector_index(ids=ids)
         return removed
 
     @db_lock
@@ -1482,7 +1474,7 @@ Conversation:
         seen_files = set()
 
         for source_file in source_files:
-            path = self._resolve_indexed_source_path(source_file)
+            path = resolve_indexed_source_path(source_file)
             if not path or path in seen_files:
                 continue
             seen_files.add(path)
@@ -1516,34 +1508,6 @@ Conversation:
                     return results
 
         return results
-
-    @staticmethod
-    def _resolve_indexed_source_path(source_file: str, source_root: Optional[str] = None) -> Optional[str]:
-        # Defense against path traversal (see _allowed_source_roots docs).
-        # Reject `..` segments outright; the is_within_roots check below is
-        # the real boundary, but this catches the obvious case early.
-        if not source_file or ".." in Path(source_file).parts:
-            return None
-
-        candidates = []
-        if os.path.isabs(source_file):
-            candidates.append(source_file)
-        else:
-            if source_root:
-                candidates.append(os.path.abspath(os.path.join(source_root, source_file)))
-            candidates.append(os.path.abspath(source_file))
-            candidates.append(os.path.abspath(os.path.join(os.path.dirname(__file__), source_file)))
-
-        roots = _allowed_source_roots()
-        for candidate in candidates:
-            if not os.path.isfile(candidate):
-                continue
-            resolved = os.path.realpath(candidate)
-            # Refuse to open paths that resolve outside every allowed root.
-            if not _is_within_roots(resolved, roots):
-                continue
-            return resolved
-        return None
 
     @db_lock
     def shortest_path(self, from_id: str, to_id: str) -> List[Dict[str, Any]]:
@@ -1778,6 +1742,7 @@ Conversation:
 
         # 1. Insert nodes as memories in bulk and build external->internal id map
         import time
+        self._check_writable(namespace)
         current_time = int(time.time())
         memory_fts_data = []
         memory_stats_data = []
@@ -1837,6 +1802,7 @@ Conversation:
                 "INSERT OR IGNORE INTO memory_stats (id, access_count, is_pinned) VALUES (?, 0, 0)",
                 memory_stats_data
             )
+            self._queue_vector_sync(chroma_ids)
             self.conn.commit()
 
         report_progress("sqlite", len(nodes), len(nodes), "SQLite 写入完成")
@@ -1847,35 +1813,11 @@ Conversation:
             batch_size = 200  # Larger batch = fewer round-trips, better throughput
             total_batches = (len(chroma_ids) + batch_size - 1) // batch_size
 
-            try:
-                for batch_idx in range(0, len(chroma_ids), batch_size):
-                    batch_end = min(batch_idx + batch_size, len(chroma_ids))
-                    batch_docs = chroma_documents[batch_idx:batch_end]
-                    batch_metas = chroma_metadatas[batch_idx:batch_end]
-                    batch_ids = chroma_ids[batch_idx:batch_end]
-
-                    self.collection.add(
-                        documents=batch_docs,
-                        metadatas=batch_metas,
-                        ids=batch_ids
-                    )
-
-                    # Report progress after each batch
-                    report_progress("chroma", batch_end, len(chroma_ids), f"向量化进度 {batch_end}/{len(chroma_ids)}")
-
-                report_progress("chroma", len(chroma_ids), len(chroma_ids), "ChromaDB 批量写入成功")
-            except Exception as e:
-                import sys
-                print(f"Error adding to ChromaDB in bulk: {e}", file=sys.stderr)
-                report_progress("chroma_fallback", 0, len(chroma_ids), "批量写入失败，切换为逐条写入...")
-                for idx, (doc, meta, cid) in enumerate(zip(chroma_documents, chroma_metadatas, chroma_ids)):
-                    try:
-                        self.collection.add(documents=[doc], metadatas=[meta], ids=[cid])
-                        if (idx + 1) % max(1, len(chroma_ids) // 20) == 0:
-                            report_progress("chroma_fallback", idx + 1, len(chroma_ids), f"已写入 {idx + 1}/{len(chroma_ids)} 个向量")
-                    except Exception as ex:
-                        pass
-                report_progress("chroma_fallback", len(chroma_ids), len(chroma_ids), "ChromaDB 逐条写入完成")
+            for batch_idx in range(0, len(chroma_ids), batch_size):
+                batch_ids = chroma_ids[batch_idx:batch_idx + batch_size]
+                status = self.sync_vector_index(limit=batch_size, ids=batch_ids)
+                report_progress("chroma", min(batch_idx + batch_size, len(chroma_ids)), len(chroma_ids),
+                                f"Indexed batch; pending vectors: {status['pending']}")
 
         # 2. Resolve edges to internal ids, dedup before DB write.
         # In incremental mode, also resolve against EXISTING graph_nodes so edges
@@ -1983,7 +1925,7 @@ Conversation:
         if raw_content and raw_content != label:
             parts.append(f"summary: {raw_content}")
 
-        snippet = self._read_source_snippet(
+        snippet = read_source_snippet(
             source_file,
             source_location,
             source_root=node.get("source_root"),
@@ -1992,48 +1934,6 @@ Conversation:
             parts.append("snippet:\n" + snippet)
 
         return "\n".join(parts)
-
-    def _read_source_snippet(
-        self,
-        source_file: str,
-        source_location: str,
-        source_root: Optional[str] = None,
-        context_lines: int = 6,
-    ) -> str:
-        line_no = self._parse_source_line(source_location)
-        if not source_file or not line_no:
-            return ""
-
-        path = self._resolve_indexed_source_path(source_file, source_root=source_root)
-        if not path:
-            return ""
-
-        try:
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                lines = fh.readlines()
-        except OSError:
-            return ""
-
-        start = max(0, line_no - context_lines - 1)
-        end = min(len(lines), line_no + context_lines)
-        return "\n".join(
-            f"{idx}: {lines[idx - 1].rstrip()}"
-            for idx in range(start + 1, end + 1)
-        )
-
-    @staticmethod
-    def _parse_source_line(source_location: str) -> Optional[int]:
-        if not source_location:
-            return None
-        text = str(source_location).strip()
-        if text.startswith("L"):
-            text = text[1:]
-        text = text.split(":", 1)[0].split("-", 1)[0]
-        try:
-            line_no = int(text)
-        except ValueError:
-            return None
-        return line_no if line_no > 0 else None
 
     @staticmethod
     def _infer_node_type(node: Dict) -> str:

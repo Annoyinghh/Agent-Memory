@@ -13,11 +13,12 @@ default — polling has a cost and a cross-process write window).
 """
 from __future__ import annotations
 
-import hashlib
 import os
 import sys
 import threading
 from typing import Dict, List, Optional
+
+from source_files import changed_indexed_files
 
 
 def _log(msg: str) -> None:
@@ -119,20 +120,7 @@ class AutoSyncWatcher:
                 _log(f"{namespace}: {len(manifest)} tracked files exceed "
                      f"AUTO_SYNC_MAX_FILES={self.max_files}; skipping")
                 return
-            changed: List[str] = []
-            for source_file, old_hash in manifest.items():
-                path = self.engine._resolve_indexed_source_path(source_file)
-                if not path:
-                    continue
-                try:
-                    h = hashlib.sha256()
-                    with open(path, "rb") as fh:
-                        for chunk in iter(lambda: fh.read(65536), b""):
-                            h.update(chunk)
-                except OSError:
-                    continue
-                if h.hexdigest() != old_hash:
-                    changed.append(source_file)
+            changed = changed_indexed_files(manifest)
             if not changed:
                 return
             target = self.targets.get(namespace, getattr(self, "_default_target", "/workspace"))

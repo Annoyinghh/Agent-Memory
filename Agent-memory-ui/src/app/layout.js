@@ -1,11 +1,9 @@
-import './globals.css';
+import './workspace.css';
 import { AppProvider } from '@/context/AppContext';
-import Sidebar from '@/components/Sidebar';
-import Header from '@/components/Header';
 
 export const metadata = {
-  title: 'Agent Memory Control Center',
-  description: 'Futuristic dashboard for local Agent Memory database management',
+  title: 'Agent Memory · Code Intelligence',
+  description: '本地代码索引、关系追踪与 Agent 记忆工作台',
 };
 
 export default function RootLayout({ children }) {
@@ -13,13 +11,7 @@ export default function RootLayout({ children }) {
     <html lang="zh">
       <body>
         <AppProvider>
-          <div className="layout-wrapper">
-            <Sidebar />
-            <main className="main-content">
-              <Header />
-              <div className="page-view-container">{children}</div>
-            </main>
-          </div>
+          {children}
         </AppProvider>
       </body>
     </html>

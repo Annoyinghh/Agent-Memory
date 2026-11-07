@@ -5,7 +5,6 @@ Parses graphify-out/graph.json and imports nodes/edges into the memory engine.
 
 import json
 import argparse
-from memory_engine import MemoryEngine
 
 
 def load_graph(graph_path: str) -> dict:
@@ -13,7 +12,7 @@ def load_graph(graph_path: str) -> dict:
         return json.load(f)
 
 
-def parse_graphify_json(data: dict):
+def parse_graphify_json(data: dict, source_root: str = None):
     """Extract nodes and edges from Graphify's graph.json format."""
     nodes = []
     edges = []
@@ -26,6 +25,7 @@ def parse_graphify_json(data: dict):
     for n in raw_nodes:
         if isinstance(n, dict):
             nodes.append({
+                **n,
                 "id": n.get("id", ""),
                 "label": n.get("label", ""),
                 "content": n.get("label", ""),
@@ -33,6 +33,7 @@ def parse_graphify_json(data: dict):
                 "source_location": n.get("source_location", ""),
                 "file_type": n.get("file_type", "code"),
                 "community": n.get("community"),
+                **({"source_root": source_root} if source_root is not None else {}),
             })
 
     # Graphify stores edges under "edges" key
@@ -42,11 +43,14 @@ def parse_graphify_json(data: dict):
 
     for e in raw_edges:
         if isinstance(e, dict):
+            confidence = e.get("confidence", "INFERRED")
+            if not isinstance(confidence, (int, float)):
+                confidence = 1.0 if confidence == "EXTRACTED" else 0.7
             edges.append({
                 "source": e.get("source", ""),
                 "target": e.get("target", ""),
                 "relation": e.get("relation", "unknown"),
-                "confidence": e.get("confidence", 1.0),
+                "confidence": confidence,
                 "source_file": e.get("source_file", ""),
             })
 
@@ -54,14 +58,17 @@ def parse_graphify_json(data: dict):
 
 
 def import_graph(graph_path: str, namespace: str, db_dir: str = "./data"):
-    engine = MemoryEngine(db_dir=db_dir)
+    from memory_engine import MemoryEngine
+
     data = load_graph(graph_path)
     nodes, edges = parse_graphify_json(data)
 
     print(f"Parsed {len(nodes)} nodes, {len(edges)} edges from {graph_path}")
-    result = engine.import_graph_data(nodes, edges, namespace)
-
-    engine.close()
+    engine = MemoryEngine(db_dir=db_dir)
+    try:
+        result = engine.import_graph_data(nodes, edges, namespace)
+    finally:
+        engine.close()
     print(f"Imported {result['nodes_imported']} nodes, {result['edges_imported']} edges into namespace '{namespace}'")
     return result
 

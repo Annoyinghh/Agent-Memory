@@ -5,26 +5,15 @@ import tempfile
 from fastapi.testclient import TestClient
 from unittest.mock import patch
 
-# Mock environment variable for the test to use a temporary DB
-temp_dir = tempfile.mkdtemp()
-os.environ["MEMORY_DB_DIR"] = temp_dir
-
-from api import app, engine
+import api
+from memory_engine import MemoryEngine
 
 @pytest.fixture
-def client():
-    # Use TestClient as a context manager to trigger lifespan events
-    with TestClient(app) as client:
+def client(tmp_path, monkeypatch, test_embedding):
+    monkeypatch.setenv('MEMORY_DB_DIR', str(tmp_path / 'api-db'))
+    monkeypatch.setattr(api, 'MemoryEngine', lambda **kwargs: MemoryEngine(**kwargs, embedding_function=test_embedding))
+    with TestClient(api.app) as client:
         yield client
-        
-@pytest.fixture(autouse=True)
-def cleanup():
-    yield
-    # Cleanup DB files after each test module is run. This might need 
-    # to be adjusted if tests run concurrently, but fine for simple tests.
-    if engine:
-        engine.close()
-    shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def test_api_update_memory(client):
@@ -65,7 +54,7 @@ def test_api_update_memory(client):
     assert updated_item["content"] == new_content
     assert updated_item["source"] == new_source
 
-def test_api_insert_deduplication(client):
+def test_api_insert_deduplication(client, monkeypatch):
     namespace = "api_dedup_ns"
     
     resp1 = client.post("/api/memory/insert", json={
@@ -77,6 +66,7 @@ def test_api_insert_deduplication(client):
     assert resp1.status_code == 200
     doc_id1 = resp1.json()["id"]
     
+    monkeypatch.setattr(api.engine, '_safe_chroma_query', lambda args: {'ids': [[doc_id1]], 'distances': [[0.1]]})
     resp2 = client.post("/api/memory/insert", json={
         "namespace": namespace,
         "content": "Python FastAPI is the framework for the backend.",
@@ -198,7 +188,6 @@ def test_api_importance_scoring(client):
     # Test record access
     access_resp = client.post("/api/memory/access", json={"doc_id": doc_id})
     assert access_resp.status_code == 200
-\
 def test_api_active_forgetting(client):
     namespace = 'api_forget_ns'
     for i in range(5):
@@ -206,4 +195,3 @@ def test_api_active_forgetting(client):
     resp = client.post('/api/memory/forget', json={'namespace': namespace, 'max_capacity': 3})
     assert resp.status_code == 200
     assert resp.json()['deleted_count'] == 2
-\

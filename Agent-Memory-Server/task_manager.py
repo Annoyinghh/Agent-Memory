@@ -6,6 +6,7 @@ Manages task state, progress tracking, and results.
 import uuid
 import time
 import threading
+import traceback
 from typing import Dict, Optional, Any
 from dataclasses import dataclass, asdict
 
@@ -51,6 +52,23 @@ class TaskManager:
             )
         return task_id
 
+    def submit(self, operation, *args, **kwargs) -> str:
+        """Run an operation with one shared progress/result/error lifecycle."""
+        task_id = self.create_task()
+
+        def progress_callback(stage, current, total, message):
+            self.update_progress(task_id, stage, current, total, message)
+
+        def run():
+            try:
+                result = operation(*args, progress_callback=progress_callback, **kwargs)
+                self.complete_task(task_id, result)
+            except Exception as exc:
+                self.fail_task(task_id, f"{exc}\n{traceback.format_exc()}")
+
+        threading.Thread(target=run, name=f"memory-task-{task_id}", daemon=True).start()
+        return task_id
+
     def update_progress(self, task_id: str, stage: str, current: int, total: int, message: str):
         """Update task progress."""
         with self.lock:
@@ -90,8 +108,9 @@ class TaskManager:
 
     def get_task_dict(self, task_id: str) -> Optional[Dict]:
         """Get task progress as dict."""
-        task = self.get_task(task_id)
-        return asdict(task) if task else None
+        with self.lock:
+            task = self.tasks.get(task_id)
+            return asdict(task) if task else None
 
     def delete_task(self, task_id: str):
         """Delete a task."""

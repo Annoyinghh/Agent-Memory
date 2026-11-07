@@ -32,7 +32,11 @@ mcp = FastMCP(
 )
 
 # Initialize the memory engine
-engine = MemoryEngine(db_dir="./data")
+engine = MemoryEngine(db_dir=os.environ.get("MEMORY_DB_DIR", "./data"))
+
+
+def _tool_json(value) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 # ============================================================
 # MCP Tools (for AI agents like Claude via stdio/SSE)
@@ -81,15 +85,15 @@ def hybrid_search(namespace: str, query: str, top_k: int = 5) -> str:
         query: The user's question, keyword, or error code.
         top_k: Number of results to return.
     """
-    results = engine.hybrid_search(namespace, query, top_k)
+    results, diagnostics = engine.search_with_diagnostics(namespace, query, top_k)
     if not results:
         return f"No memories found for query '{query}' in namespace '{namespace}'."
 
     formatted_results = []
     for r in results:
-        formatted_results.append(f"====== Memory Context ======\nSource: {r.source}\nScore: {r.score:.3f}\nTimestamp: {r.timestamp}\nContent:\n{r.content}\n============================")
+        formatted_results.append(f"====== Memory Context ======\nSource: {r.source}\nRanking score ({r.score_kind}, not probability): {r.score:.4f}\nTimestamp: {r.timestamp}\nContent:\n{r.content}\n============================")
 
-    return "\n\n".join(formatted_results)
+    return json.dumps(diagnostics) + "\n" + "\n\n".join(formatted_results)
 
 @mcp.tool()
 def pack_context(namespace: str, query: str, max_tokens: int = 2000, compress: bool = False) -> str:
@@ -465,7 +469,7 @@ def project_overview() -> str:
     No arguments needed.
     """
     overview = engine.project_overview()
-    return json.dumps(overview, indent=2, ensure_ascii=False)
+    return _tool_json(overview)
 
 @mcp.tool()
 def import_graph(nodes: str, edges: str, namespace: str) -> str:
@@ -503,8 +507,7 @@ def trace_path(namespace: str, start: str, direction: str = "outbound",
         depth: 1-5 (default 3).
         limit_per_node: Cap edges per frontier node (default 50).
     """
-    return json.dumps(engine.trace_path(namespace, start, direction, relation, depth, limit_per_node),
-                      ensure_ascii=False)
+    return _tool_json(engine.trace_path(namespace, start, direction, relation, depth, limit_per_node))
 
 
 @mcp.tool()
@@ -524,8 +527,8 @@ def search_graph(namespace: str, node_type: str = None, source_file_regex: str =
         min_degree / max_degree: Optional inclusive total-degree bounds.
         limit: Page size (default 50, max 500). offset: Pagination offset.
     """
-    return json.dumps(engine.search_graph(namespace, node_type, source_file_regex, name_regex,
-                                          min_degree, max_degree, limit, offset), ensure_ascii=False)
+    return _tool_json(engine.search_graph(namespace, node_type, source_file_regex, name_regex,
+                                          min_degree, max_degree, limit, offset))
 
 
 @mcp.tool()
@@ -538,7 +541,7 @@ def get_architecture(namespace: str, hotspot_top: int = 20) -> str:
         namespace: The project namespace.
         hotspot_top: How many hotspots to return (default 20).
     """
-    return json.dumps(engine.get_architecture(namespace, hotspot_top), ensure_ascii=False)
+    return _tool_json(engine.get_architecture(namespace, hotspot_top))
 
 
 @mcp.tool()
@@ -551,7 +554,7 @@ def dead_code(namespace: str, limit: int = 500) -> str:
         namespace: The project namespace.
         limit: Max results (default 500).
     """
-    return json.dumps(engine.dead_code(namespace, limit), ensure_ascii=False)
+    return _tool_json(engine.dead_code(namespace, limit))
 
 
 @mcp.tool()
@@ -563,7 +566,7 @@ def get_graph_schema(namespace: str = None) -> str:
     Args:
         namespace: Optional namespace filter. If omitted, returns global stats.
     """
-    return json.dumps(engine.get_graph_schema(namespace), ensure_ascii=False)
+    return _tool_json(engine.get_graph_schema(namespace))
 
 
 @mcp.tool()
@@ -579,8 +582,7 @@ def get_code_snippet(namespace: str, node_id: str = None, qualified_name: str = 
         qualified_name: Symbol name/substring if node_id unknown (same matching as trace_path).
         context_lines: Lines of context each side of the symbol line (default 6, max 50).
     """
-    return json.dumps(engine.get_code_snippet(namespace, node_id, qualified_name, context_lines),
-                      ensure_ascii=False)
+    return _tool_json(engine.get_code_snippet(namespace, node_id, qualified_name, context_lines))
 
 
 @mcp.tool()
@@ -595,7 +597,7 @@ def detect_changes(namespace: str, base: str = "HEAD", unified: bool = False) ->
         base: Git ref to diff against (default 'HEAD' = uncommitted working-tree changes).
         unified: Reserved for line-level mapping (currently name-only).
     """
-    return json.dumps(engine.detect_changes(namespace, base, unified), ensure_ascii=False)
+    return _tool_json(engine.detect_changes(namespace, base, unified))
 
 
 @mcp.tool()
@@ -674,7 +676,7 @@ def sync_codebase(target_dir: str, namespace: str, incremental: bool = False) ->
     # MCP JSON-RPC channel (stdio). Redirect those prints to stderr (logs).
     real_stdout, sys.stdout = sys.stdout, sys.stderr
     try:
-        result = extract_to_memory(target_dir, namespace, db_dir="./data", incremental=incremental)
+        result = extract_to_memory(target_dir, namespace, db_dir=os.path.dirname(engine.sqlite_path), incremental=incremental)
     finally:
         sys.stdout = real_stdout
 

@@ -1,9 +1,10 @@
-mcp>=1.1.2
+mcp>=1.1.2,<2
 chromadb>=0.5.0
 pydantic>=2.0.0
 litellm
 fastapi
 uvicorn
+python-multipart
 networkx  # Louvain community detection (get_architecture); also a graphify transitive dep
 # headroom-ai[all] — optional reversible context compression (code/JSON/logs/prose).
 # Installed via the Dockerfile in a BEST-EFFORT retry loop (large: pulls PyTorch + Kompress).

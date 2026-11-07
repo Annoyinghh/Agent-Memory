@@ -1,0 +1,721 @@
+{
+  "description": "Agent-authored synthetic regression seed; not a representative or human-validated quality benchmark.",
+  "corpus": [
+    {
+      "id": "port",
+      "namespace": "project",
+      "content": "The FastAPI backend listens on port 8900. 后端端口配置为 8900。",
+      "source": "api.py"
+    },
+    {
+      "id": "ui",
+      "namespace": "project",
+      "content": "The Next.js dashboard runs on port 3000. 前端使用 Next.js。",
+      "source": "package.json"
+    },
+    {
+      "id": "lock",
+      "namespace": "project",
+      "content": "db_lock protects SQLite operations with a threading.RLock reentrant lock.",
+      "source": "memory_engine.py"
+    },
+    {
+      "id": "fts",
+      "namespace": "project",
+      "content": "hybrid_search combines FTS5 lexical search with Chroma dense vectors.",
+      "source": "memory_engine.py"
+    },
+    {
+      "id": "backup",
+      "namespace": "project",
+      "content": "export_namespace creates backups including memory content, graph edges and embeddings.",
+      "source": "backup_cli.py"
+    },
+    {
+      "id": "restore",
+      "namespace": "project",
+      "content": "import_namespace restores a namespace backup and preserves timestamps and pinned flags.",
+      "source": "memory_engine.py"
+    },
+    {
+      "id": "graph",
+      "namespace": "project",
+      "content": "trace_path performs bounded BFS over calls edges to find caller and callee dependencies.",
+      "source": "code_query.py"
+    },
+    {
+      "id": "source",
+      "namespace": "project",
+      "content": "precise_source_search finds literal source text inside indexed code files.",
+      "source": "memory_engine.py"
+    },
+    {
+      "id": "working",
+      "namespace": "project",
+      "content": "write_working_memory stores namespace-scoped scratchpad keys and values.",
+      "source": "memory_engine.py"
+    },
+    {
+      "id": "snapshot",
+      "namespace": "project",
+      "content": "freeze_snapshot saves a summary with source snapshot and pins the memory.",
+      "source": "memory_engine.py"
+    },
+    {
+      "id": "chunks",
+      "namespace": "project",
+      "content": "TextChunker splits markdown using heading and paragraph boundaries with chunk_overlap.",
+      "source": "chunker.py"
+    },
+    {
+      "id": "manifest",
+      "namespace": "project",
+      "content": "graph_manifest stores source_file content_hash for incremental code extraction.",
+      "source": "graphify_bridge.py"
+    },
+    {
+      "id": "noise-0",
+      "namespace": "project",
+      "content": "Archived experiment 0: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-1",
+      "namespace": "project",
+      "content": "Archived experiment 1: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-2",
+      "namespace": "project",
+      "content": "Archived experiment 2: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-3",
+      "namespace": "project",
+      "content": "Archived experiment 3: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-4",
+      "namespace": "project",
+      "content": "Archived experiment 4: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-5",
+      "namespace": "project",
+      "content": "Archived experiment 5: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-6",
+      "namespace": "project",
+      "content": "Archived experiment 6: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-7",
+      "namespace": "project",
+      "content": "Archived experiment 7: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-8",
+      "namespace": "project",
+      "content": "Archived experiment 8: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-9",
+      "namespace": "project",
+      "content": "Archived experiment 9: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-10",
+      "namespace": "project",
+      "content": "Archived experiment 10: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-11",
+      "namespace": "project",
+      "content": "Archived experiment 11: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-12",
+      "namespace": "project",
+      "content": "Archived experiment 12: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-13",
+      "namespace": "project",
+      "content": "Archived experiment 13: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-14",
+      "namespace": "project",
+      "content": "Archived experiment 14: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-15",
+      "namespace": "project",
+      "content": "Archived experiment 15: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-16",
+      "namespace": "project",
+      "content": "Archived experiment 16: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-17",
+      "namespace": "project",
+      "content": "Archived experiment 17: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-18",
+      "namespace": "project",
+      "content": "Archived experiment 18: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-19",
+      "namespace": "project",
+      "content": "Archived experiment 19: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-20",
+      "namespace": "project",
+      "content": "Archived experiment 20: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-21",
+      "namespace": "project",
+      "content": "Archived experiment 21: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-22",
+      "namespace": "project",
+      "content": "Archived experiment 22: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-23",
+      "namespace": "project",
+      "content": "Archived experiment 23: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-24",
+      "namespace": "project",
+      "content": "Archived experiment 24: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-25",
+      "namespace": "project",
+      "content": "Archived experiment 25: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-26",
+      "namespace": "project",
+      "content": "Archived experiment 26: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-27",
+      "namespace": "project",
+      "content": "Archived experiment 27: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-28",
+      "namespace": "project",
+      "content": "Archived experiment 28: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-29",
+      "namespace": "project",
+      "content": "Archived experiment 29: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-30",
+      "namespace": "project",
+      "content": "Archived experiment 30: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-31",
+      "namespace": "project",
+      "content": "Archived experiment 31: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-32",
+      "namespace": "project",
+      "content": "Archived experiment 32: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-33",
+      "namespace": "project",
+      "content": "Archived experiment 33: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-34",
+      "namespace": "project",
+      "content": "Archived experiment 34: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-35",
+      "namespace": "project",
+      "content": "Archived experiment 35: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-36",
+      "namespace": "project",
+      "content": "Archived experiment 36: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-37",
+      "namespace": "project",
+      "content": "Archived experiment 37: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-38",
+      "namespace": "project",
+      "content": "Archived experiment 38: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "noise-39",
+      "namespace": "project",
+      "content": "Archived experiment 39: metrics alpha beta gamma, unrelated benchmark record.",
+      "source": "archive"
+    },
+    {
+      "id": "private",
+      "namespace": "project:private",
+      "content": "secret_canary private deployment password note",
+      "source": "private"
+    }
+  ],
+  "queries": [
+    {
+      "query": "backend port",
+      "namespace": "project",
+      "relevant_ids": [
+        "port"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "FastAPI 8900",
+      "namespace": "project",
+      "relevant_ids": [
+        "port"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "后端端口配置",
+      "namespace": "project",
+      "relevant_ids": [
+        "port"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "api.py port",
+      "namespace": "project",
+      "relevant_ids": [
+        "port"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "dashboard port",
+      "namespace": "project",
+      "relevant_ids": [
+        "ui"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "Next.js dashboard",
+      "namespace": "project",
+      "relevant_ids": [
+        "ui"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "前端使用",
+      "namespace": "project",
+      "relevant_ids": [
+        "ui"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "port 3000",
+      "namespace": "project",
+      "relevant_ids": [
+        "ui"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "db_lock",
+      "namespace": "project",
+      "relevant_ids": [
+        "lock"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "SQLite reentrant lock",
+      "namespace": "project",
+      "relevant_ids": [
+        "lock"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "threading.RLock",
+      "namespace": "project",
+      "relevant_ids": [
+        "lock"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "database lock",
+      "namespace": "project",
+      "relevant_ids": [
+        "lock"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "hybrid_search",
+      "namespace": "project",
+      "relevant_ids": [
+        "fts"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "FTS5 Chroma",
+      "namespace": "project",
+      "relevant_ids": [
+        "fts"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "lexical dense retrieval",
+      "namespace": "project",
+      "relevant_ids": [
+        "fts"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "hybrid search",
+      "namespace": "project",
+      "relevant_ids": [
+        "fts"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "export_namespace",
+      "namespace": "project",
+      "relevant_ids": [
+        "backup"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "backup embeddings",
+      "namespace": "project",
+      "relevant_ids": [
+        "backup"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "memory graph backup",
+      "namespace": "project",
+      "relevant_ids": [
+        "backup"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "export memory",
+      "namespace": "project",
+      "relevant_ids": [
+        "backup"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "import_namespace",
+      "namespace": "project",
+      "relevant_ids": [
+        "restore"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "restore pinned flags",
+      "namespace": "project",
+      "relevant_ids": [
+        "restore"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "restore timestamps",
+      "namespace": "project",
+      "relevant_ids": [
+        "restore"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "namespace restore",
+      "namespace": "project",
+      "relevant_ids": [
+        "restore"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "trace_path",
+      "namespace": "project",
+      "relevant_ids": [
+        "graph"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "BFS calls",
+      "namespace": "project",
+      "relevant_ids": [
+        "graph"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "caller callee dependencies",
+      "namespace": "project",
+      "relevant_ids": [
+        "graph"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "bounded traversal",
+      "namespace": "project",
+      "relevant_ids": [
+        "graph"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "precise_source_search",
+      "namespace": "project",
+      "relevant_ids": [
+        "source"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "literal source search",
+      "namespace": "project",
+      "relevant_ids": [
+        "source"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "indexed code files",
+      "namespace": "project",
+      "relevant_ids": [
+        "source"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "source text",
+      "namespace": "project",
+      "relevant_ids": [
+        "source"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "write_working_memory",
+      "namespace": "project",
+      "relevant_ids": [
+        "working"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "scratchpad keys",
+      "namespace": "project",
+      "relevant_ids": [
+        "working"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "working memory values",
+      "namespace": "project",
+      "relevant_ids": [
+        "working"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "namespace scratchpad",
+      "namespace": "project",
+      "relevant_ids": [
+        "working"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "freeze_snapshot",
+      "namespace": "project",
+      "relevant_ids": [
+        "snapshot"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "pinned snapshot",
+      "namespace": "project",
+      "relevant_ids": [
+        "snapshot"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "snapshot summary",
+      "namespace": "project",
+      "relevant_ids": [
+        "snapshot"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "save snapshot",
+      "namespace": "project",
+      "relevant_ids": [
+        "snapshot"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "TextChunker",
+      "namespace": "project",
+      "relevant_ids": [
+        "chunks"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "chunk_overlap",
+      "namespace": "project",
+      "relevant_ids": [
+        "chunks"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "markdown heading boundaries",
+      "namespace": "project",
+      "relevant_ids": [
+        "chunks"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "paragraph chunk splitting",
+      "namespace": "project",
+      "relevant_ids": [
+        "chunks"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "graph_manifest",
+      "namespace": "project",
+      "relevant_ids": [
+        "manifest"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "content_hash incremental",
+      "namespace": "project",
+      "relevant_ids": [
+        "manifest"
+      ],
+      "split": "dev"
+    },
+    {
+      "query": "incremental code extraction",
+      "namespace": "project",
+      "relevant_ids": [
+        "manifest"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "source_file manifest",
+      "namespace": "project",
+      "relevant_ids": [
+        "manifest"
+      ],
+      "split": "holdout"
+    },
+    {
+      "query": "secret_canary",
+      "namespace": "project",
+      "relevant_ids": [],
+      "split": "holdout"
+    },
+    {
+      "query": "absent-zebra-987654",
+      "namespace": "project",
+      "relevant_ids": [],
+      "split": "holdout"
+    }
+  ]
+}

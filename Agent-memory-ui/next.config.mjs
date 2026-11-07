@@ -13,7 +13,7 @@ const nextConfig = {
       beforeFiles: [
         {
           source: '/api/:path*',
-          destination: 'http://backend:8900/api/:path*',
+          destination: `${process.env.MEMORY_API_ORIGIN || 'http://backend:8900'}/api/:path*`,
         },
       ],
     };

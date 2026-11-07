@@ -5,7 +5,6 @@ Agent Memory Server — REST API (FastAPI)
 
 import os
 import sys
-import io
 import uuid
 import argparse
 
@@ -18,10 +17,11 @@ if hasattr(sys.stderr, 'reconfigure'):
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
-from memory_engine import MemoryEngine, _allowed_source_roots, _is_within_roots
+from memory_engine import MemoryEngine
+from source_files import allowed_source_roots, is_within_roots
 from task_manager import task_manager
 # Optional headroom-backed reversible compression (graceful no-op if unavailable).
 try:
@@ -30,12 +30,9 @@ except Exception:  # pragma: no cover - optional module
     compress_text = None
     _ccr_retrieve = None
     _ccr_stats = None
-import asyncio
 import gzip
 import json
-import struct
 import zlib
-import threading
 
 engine: MemoryEngine = None
 
@@ -69,8 +66,14 @@ async def lifespan(app_instance):
             watcher.stop()
         except Exception:
             pass
+    engine.close()
 
 app = FastAPI(title="Agent Memory Server API", version="1.0.0", lifespan=lifespan)
+
+
+@app.exception_handler(PermissionError)
+async def protected_namespace_error(request, exc):
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
 
 app.add_middleware(
     CORSMiddleware,
@@ -93,6 +96,7 @@ class InsertResponse(BaseModel):
     id: str
     namespace: str
     message: str
+    pending_vectors: int = 0
 
 class UpdateRequest(BaseModel):
     doc_id: str
@@ -104,6 +108,7 @@ class UpdateResponse(BaseModel):
     id: str
     namespace: str
     message: str
+    pending_vectors: int = 0
 
 class SearchRequest(BaseModel):
     namespace: str
@@ -117,12 +122,18 @@ class MemoryItemResponse(BaseModel):
     source: str
     timestamp: int
     score: float
+    score_kind: str = "importance"
+    relevance: str = "high"
+    channels: list[str] = []
 
 class SearchResponse(BaseModel):
     query: str
     namespace: str
     total: int
     results: list[MemoryItemResponse]
+    method: str = "rrf"
+    degraded_channels: list[str] = []
+    pending_vectors: int = 0
 
 class PackRequest(BaseModel):
     namespace: str
@@ -275,7 +286,7 @@ def _validate_target_path(path: str) -> None:
     if not path:
         raise HTTPException(status_code=400, detail="path must not be empty")
     resolved = os.path.realpath(path)
-    if not _is_within_roots(resolved, _allowed_source_roots()):
+    if not is_within_roots(resolved, allowed_source_roots()):
         raise HTTPException(
             status_code=400,
             detail=f"path '{path}' resolves outside allowed source roots. "
@@ -288,21 +299,14 @@ def _gzip_stream(raw: bytes, level: int = 6, chunk_size: int = 65536):
 
     Replaces gzip.compress(raw) for large payloads: instead of holding the full
     compressed buffer in memory alongside `raw`, we emit compressed chunks
-    incrementally. Implements the gzip format (RFC 1952) manually via
-    zlib.compressobj with negative wbits (raw deflate, no zlib wrapper).
+    incrementally. zlib supplies the gzip header, checksum and trailer.
     """
-    # gzip header: magic(2) + CM=8(1) + FLG=0(1) + MTIME=0(4) + XFL=2(1) + OS=255(1)
-    yield b'\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\xff'
-    compressor = zlib.compressobj(level, zlib.DEFLATED, -zlib.MAX_WBITS)
+    compressor = zlib.compressobj(level, zlib.DEFLATED, zlib.MAX_WBITS | 16)
     for i in range(0, len(raw), chunk_size):
         out = compressor.compress(raw[i:i + chunk_size])
         if out:
             yield out
-    out = compressor.flush()
-    if out:
-        yield out
-    # trailer: CRC32(4 LE) + ISIZE(4 LE, uncompressed size mod 2^32)
-    yield struct.pack('<II', zlib.crc32(raw) & 0xFFFFFFFF, len(raw) & 0xFFFFFFFF)
+    yield compressor.flush()
 
 
 # ── Endpoints ──────────────────────────────────────────────────
@@ -314,7 +318,7 @@ def insert_memory(req: InsertRequest):
     doc_id = str(uuid.uuid4())
     final_id = engine.insert_memory(doc_id, req.namespace, req.content, req.source, dedup_threshold=req.dedup_threshold)
     msg = "ok" if final_id == doc_id else "merged"
-    return InsertResponse(id=final_id, namespace=req.namespace, message=msg)
+    return InsertResponse(id=final_id, namespace=req.namespace, message=msg, pending_vectors=engine.pending_vector_sync())
 
 
 @app.post("/api/memory/update", response_model=UpdateResponse)
@@ -324,20 +328,21 @@ def update_memory(req: UpdateRequest):
     success = engine.update_memory(req.doc_id, req.namespace, req.content, req.source)
     if not success:
         raise HTTPException(status_code=404, detail="Memory not found or update failed")
-    return UpdateResponse(id=req.doc_id, namespace=req.namespace, message="updated")
+    return UpdateResponse(id=req.doc_id, namespace=req.namespace, message="updated", pending_vectors=engine.pending_vector_sync())
 
 
 @app.post("/api/memory/search", response_model=SearchResponse)
 def search_memory(req: SearchRequest):
     """混合检索：语义向量 + 关键词"""
-    results = engine.hybrid_search(req.namespace, req.query, req.top_k)
+    results, diagnostics = engine.search_with_diagnostics(req.namespace, req.query, req.top_k)
     items = [
         MemoryItemResponse(
             id=r.id, namespace=r.namespace, content=r.content,
-            source=r.source, timestamp=r.timestamp, score=r.score
+            source=r.source, timestamp=r.timestamp, score=r.score,
+            score_kind=r.score_kind, relevance=r.relevance, channels=r.channels
         ) for r in results
     ]
-    return SearchResponse(query=req.query, namespace=req.namespace, total=len(items), results=items)
+    return SearchResponse(query=req.query, namespace=req.namespace, total=len(items), results=items, **diagnostics)
 
 
 @app.post("/api/memory/pack", response_model=PackResponse)
@@ -481,42 +486,25 @@ def search_memory_get(
     top_k: int = Query(5),
 ):
     """GET 方式检索（方便调试）"""
-    results = engine.hybrid_search(namespace, query, top_k)
+    results, diagnostics = engine.search_with_diagnostics(namespace, query, top_k)
     items = [
         MemoryItemResponse(
             id=r.id, namespace=r.namespace, content=r.content,
-            source=r.source, timestamp=r.timestamp, score=r.score
+            source=r.source, timestamp=r.timestamp, score=r.score,
+            score_kind=r.score_kind, relevance=r.relevance, channels=r.channels
         ) for r in results
     ]
-    return SearchResponse(query=query, namespace=namespace, total=len(items), results=items)
+    return SearchResponse(query=query, namespace=namespace, total=len(items), results=items, **diagnostics)
 
 
 @app.delete("/api/memory/delete", response_model=DeleteResponse)
 def delete_memory(req: DeleteRequest):
     """按 doc_id 或 source 前缀删除记忆"""
     _check_protected(req.namespace)
-    with engine.lock:
-        if req.doc_id:
-            engine.collection.delete(ids=[req.doc_id])
-            engine.cursor.execute("DELETE FROM memory_fts WHERE id = ?", (req.doc_id,))
-            engine.cursor.execute("DELETE FROM memory_edges WHERE from_id = ? OR to_id = ?", (req.doc_id, req.doc_id))
-            engine.conn.commit()
-            return DeleteResponse(deleted_count=1, message="deleted by id")
-        elif req.source_prefix:
-            engine.cursor.execute(
-                "SELECT id FROM memory_fts WHERE source LIKE ?",
-                (f"{req.source_prefix}%",)
-            )
-            ids = [row[0] for row in engine.cursor.fetchall()]
-            if ids:
-                engine.collection.delete(ids=ids)
-                placeholders = ",".join(["?"] * len(ids))
-                engine.cursor.execute(f"DELETE FROM memory_fts WHERE id IN ({placeholders})", ids)
-                engine.cursor.execute(f"DELETE FROM memory_edges WHERE from_id IN ({placeholders}) OR to_id IN ({placeholders})", ids + ids)
-                engine.conn.commit()
-            return DeleteResponse(deleted_count=len(ids), message=f"deleted by source prefix: {req.source_prefix}")
-        else:
-            raise HTTPException(status_code=400, detail="Must provide doc_id or source_prefix")
+    if not req.doc_id and not req.source_prefix:
+        raise HTTPException(status_code=400, detail="Must provide doc_id or source_prefix")
+    count = engine.delete_memory(req.namespace, req.doc_id, req.source_prefix)
+    return DeleteResponse(deleted_count=count, message="deleted")
 
 
 @app.get("/api/namespaces", response_model=NamespacesResponse)
@@ -854,34 +842,7 @@ def team_artifact_restore(
 ):
     """从上传的团队工件 .json.gz 恢复 namespace（后台任务，返回 task_id 轮询）。
     REPLACE 语义：先清空目标再导入，保留原始 id/时间戳/向量（免重向量化）。受保护 ns 拒绝。"""
-    raw = file.file.read()
-    try:
-        if (file.filename or "").endswith(".gz"):
-            raw = gzip.decompress(raw)
-        data = json.loads(raw.decode("utf-8"))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"无法解析工件文件: {e}")
-    if not isinstance(data, dict) or data.get("format") != "agent-memory-backup":
-        raise HTTPException(status_code=400, detail="不是 agent-memory 工件（format 字段不符）")
-    target = target_namespace or data.get("namespace")
-    if not target:
-        raise HTTPException(status_code=400, detail="工件无 namespace 且未指定 target_namespace")
-    _check_protected(target)
-
-    task_id = task_manager.create_task()
-
-    def run_restore():
-        def progress_callback(stage, current, total, message):
-            task_manager.update_progress(task_id, stage, current, total, message)
-        try:
-            result = engine.import_namespace(data, target_namespace=target, progress_callback=progress_callback)
-            task_manager.complete_task(task_id, result)
-        except Exception as e:
-            import traceback
-            task_manager.fail_task(task_id, f"{str(e)}\n{traceback.format_exc()}")
-
-    threading.Thread(target=run_restore, daemon=True).start()
-    return {"task_id": task_id, "namespace": target, "message": "工件恢复任务已创建（将清空目标 namespace 后导入）"}
+    return _restore_upload(file, target_namespace, artifact=True)
 
 
 @app.post("/api/graph/import", response_model=GraphImportResponse)
@@ -920,42 +881,19 @@ def extract_codebase(req: GraphExtractRequest):
     _validate_target_path(req.target_dir)
     from graphify_bridge import extract_to_memory
 
-    # Create task and return task ID immediately
-    task_id = task_manager.create_task()
+    def run_extraction_task(progress_callback):
+        if req.rebuild:
+            progress_callback("clear", 0, 0, f"清空旧图谱: {req.namespace}")
+            deleted = engine.clear_namespace(req.namespace)
+            progress_callback("clear", 1, 1, f"已清空 {deleted} 个旧节点，准备重新提取")
+        return extract_to_memory(
+            req.target_dir, req.namespace,
+            os.environ.get("MEMORY_DB_DIR", "./data"),
+            progress_callback=progress_callback,
+            incremental=req.incremental and not req.rebuild,
+        )
 
-    def run_extraction_task():
-        """Run extraction in background thread."""
-        def progress_callback(stage, current, total, message):
-            task_manager.update_progress(task_id, stage, current, total, message)
-
-        try:
-            # Sync mode: wipe the old graph before re-extracting so we replace
-            # rather than duplicate. Uses the shared engine; safe because the
-            # clear fully commits before extract_to_memory opens its own engine.
-            # rebuild takes precedence over incremental (a forced full reset).
-            do_incremental = req.incremental and not req.rebuild
-            if req.rebuild:
-                task_manager.update_progress(task_id, "clear", 0, 0, f"清空旧图谱: {req.namespace}")
-                deleted = engine.clear_namespace(req.namespace)
-                task_manager.update_progress(
-                    task_id, "clear", 1, 1, f"已清空 {deleted} 个旧节点，准备重新提取"
-                )
-
-            result = extract_to_memory(
-                req.target_dir,
-                req.namespace,
-                os.environ.get("MEMORY_DB_DIR", "./data"),
-                progress_callback=progress_callback,
-                incremental=do_incremental,
-            )
-            task_manager.complete_task(task_id, result)
-        except Exception as e:
-            import traceback
-            task_manager.fail_task(task_id, f"{str(e)}\n{traceback.format_exc()}")
-
-    # Start background thread
-    thread = threading.Thread(target=run_extraction_task, daemon=True)
-    thread.start()
+    task_id = task_manager.submit(run_extraction_task)
 
     # Return task ID immediately
     if req.rebuild:
@@ -1012,41 +950,29 @@ def restore_namespace(
     REPLACE 语义：先清空目标 namespace 再导入，保留原始 id/时间戳/向量（不重新
     向量化）。受保护 namespace 拒绝恢复（403）。
     """
-    raw = file.file.read()
+    return _restore_upload(file, target_namespace)
+
+
+def _restore_upload(file, target_namespace, *, artifact=False):
+    label = "工件" if artifact else "备份"
     try:
+        raw = file.file.read()
         if (file.filename or "").endswith(".gz"):
             raw = gzip.decompress(raw)
         data = json.loads(raw.decode("utf-8"))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"无法解析备份文件: {e}")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"无法解析{label}文件: {exc}")
     if not isinstance(data, dict) or data.get("format") != "agent-memory-backup":
-        raise HTTPException(status_code=400, detail="不是 agent-memory 备份文件（format 字段不符）")
-
+        detail = "不是 agent-memory 工件（format 字段不符）" if artifact else "不是 agent-memory 备份文件（format 字段不符）"
+        raise HTTPException(status_code=400, detail=detail)
     target = target_namespace or data.get("namespace")
     if not target:
-        raise HTTPException(status_code=400, detail="备份无 namespace 且未指定 target_namespace")
+        raise HTTPException(status_code=400, detail=f"{label}无 namespace 且未指定 target_namespace")
     _check_protected(target)
+    task_id = task_manager.submit(engine.import_namespace, data, target_namespace=target)
+    message = "工件恢复任务已创建（将清空目标 namespace 后导入）" if artifact else "恢复任务已创建（将清空目标 namespace 后导入）"
+    return {"task_id": task_id, "namespace": target, "message": message}
 
-    task_id = task_manager.create_task()
-
-    def run_restore_task():
-        def progress_callback(stage, current, total, message):
-            task_manager.update_progress(task_id, stage, current, total, message)
-        try:
-            result = engine.import_namespace(
-                data, target_namespace=target, progress_callback=progress_callback
-            )
-            task_manager.complete_task(task_id, result)
-        except Exception as e:
-            import traceback
-            task_manager.fail_task(task_id, f"{str(e)}\n{traceback.format_exc()}")
-
-    threading.Thread(target=run_restore_task, daemon=True).start()
-    return {
-        "task_id": task_id,
-        "namespace": target,
-        "message": "恢复任务已创建（将清空目标 namespace 后导入）",
-    }
 
 @app.get("/api/tasks/{task_id}")
 def get_task_status(task_id: str):
@@ -1063,29 +989,10 @@ def import_graph_file(req: GraphFileImportRequest):
     _validate_target_path(req.graph_path)
     from graphify_bridge import import_from_graph_json
 
-    # Create task and return task ID immediately
-    task_id = task_manager.create_task()
-
-    def run_import_task():
-        """Run import in background thread."""
-        def progress_callback(stage, current, total, message):
-            task_manager.update_progress(task_id, stage, current, total, message)
-
-        try:
-            result = import_from_graph_json(
-                req.graph_path,
-                req.namespace,
-                os.environ.get("MEMORY_DB_DIR", "./data"),
-                progress_callback=progress_callback
-            )
-            task_manager.complete_task(task_id, result)
-        except Exception as e:
-            import traceback
-            task_manager.fail_task(task_id, f"{str(e)}\n{traceback.format_exc()}")
-
-    # Start background thread
-    thread = threading.Thread(target=run_import_task, daemon=True)
-    thread.start()
+    task_id = task_manager.submit(
+        import_from_graph_json, req.graph_path, req.namespace,
+        os.environ.get("MEMORY_DB_DIR", "./data"),
+    )
 
     # Return task ID immediately
     return {"task_id": task_id, "namespace": req.namespace, "message": "任务已创建，后台正在处理"}
@@ -1101,7 +1008,7 @@ def debug_log(req: DebugLogRequest):
 @app.get("/health")
 def health():
     """Liveness probe for Docker healthcheck / load balancers."""
-    return {"status": "ok"}
+    return {"status": "ok", "pending_vectors": engine.pending_vector_sync()}
 
 
 if __name__ == "__main__":
@@ -1109,7 +1016,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Agent Memory REST API Server")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8900, help="Bind port (default: 8900)")
-    parser.add_argument("--db-dir", default="./data", help="Database directory (default: ./data)")
+    parser.add_argument("--db-dir", default=os.environ.get("MEMORY_DB_DIR", "./data"), help="Database directory (default: MEMORY_DB_DIR or ./data)")
     args = parser.parse_args()
 
     os.environ["MEMORY_DB_DIR"] = args.db_dir

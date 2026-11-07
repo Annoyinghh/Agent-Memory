@@ -1,126 +1,73 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, useSyncExternalStore } from 'react';
 import { api } from '@/lib/api';
 
-const AppContext = createContext();
+const AppContext = createContext(null);
+const KEY = 'agent-memory:workspace';
+const CHANGE = 'agent-memory:preferences';
+const TABS = new Set(['code', 'graph', 'projects', 'memory', 'sessions', 'guide']);
+let volatilePreferences = '';
+let storageDisabled = false;
+
+function subscribe(listener) {
+  window.addEventListener('storage', listener);
+  window.addEventListener(CHANGE, listener);
+  return () => { window.removeEventListener('storage', listener); window.removeEventListener(CHANGE, listener); };
+}
+function readPreferences() {
+  if (storageDisabled) return volatilePreferences;
+  try { return localStorage.getItem(KEY) || volatilePreferences; } catch { return volatilePreferences; }
+}
+function parsePreferences(value) {
+  try { return JSON.parse(value) || {}; } catch { return {}; }
+}
 
 export function AppProvider({ children }) {
-  // Defaults used for SSR and first client render (avoids hydration mismatch).
-  // localStorage values are restored in a useEffect below after mount.
-  const [activeNamespace, setActiveNamespace] = useState('all');
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [namespaces, setNamespaces] = useState([]);
+  const snapshot = useSyncExternalStore(subscribe, readPreferences, () => '');
+  const preferences = parsePreferences(snapshot);
+  const activeNamespace = preferences.namespace || 'all';
+  const activeTab = TABS.has(preferences.tab) ? preferences.tab : 'code';
   const [stats, setStats] = useState({ total_chunks: 0, namespaces: {} });
+  const namespaces = Object.keys(stats.namespaces || {});
   const [isOnline, setIsOnline] = useState(false);
-  const [lastEvent, setLastEvent] = useState({ type: 'init_silent', message: 'Holographic system standby.' });
-  const [isGraphAvatarExpanded, setIsGraphAvatarExpanded] = useState(false);
-  const [avatarMuted, setAvatarMuted] = useState(false); // Default unmuted for startup voice
-  const [isSimplified, setIsSimplified] = useState(true); // Simplified mode (no 3D decorations)
+  const [startingProjectTask, setStartingProjectTask] = useState(false);
 
-  const refreshData = useCallback(async (eventTrigger = null) => {
+  const savePreference = useCallback((key, value) => {
+    volatilePreferences = JSON.stringify({ ...parsePreferences(readPreferences()), [key]: value });
+    try { localStorage.setItem(KEY, volatilePreferences); } catch { storageDisabled = true; }
+    window.dispatchEvent(new Event(CHANGE));
+  }, []);
+  const setProjectTask = useCallback(task => savePreference('task', task), [savePreference]);
+
+  const refreshData = useCallback(async () => {
     try {
-      const statsRes = await api.getStats();
-      const nsRes = await api.getNamespaces();
-      
-      setStats(statsRes);
-      setNamespaces(nsRes.namespaces);
+      setStats(await api.getStats());
       setIsOnline(true);
-      
-      if (eventTrigger) {
-        setLastEvent(eventTrigger);
-      }
-    } catch (error) {
-      console.error('Failed to sync with local memory engine:', error);
-      setIsOnline(false);
-    }
+    } catch { setIsOnline(false); }
   }, []);
 
-  // Restore last selection from localStorage (client-only; runs after mount so
-  // SSR and first client render share the same defaults — no hydration mismatch).
   useEffect(() => {
-    try {
-      const savedNs = localStorage.getItem('hermes_active_ns');
-      if (savedNs) setActiveNamespace(savedNs);
-      const savedTab = localStorage.getItem('hermes_active_tab');
-      if (savedTab) setActiveTab(savedTab);
-      const savedMode = localStorage.getItem('hermes_simplified');
-      if (savedMode !== null) setIsSimplified(savedMode === 'true');
-    } catch {}
-  }, []);
-
-  // Poll connection and stats every 5 seconds
-  useEffect(() => {
-    refreshData({ type: 'online', message: 'Synchronizing with Agent Memory database...' });
-    
-    const interval = setInterval(() => {
-      refreshData();
-    }, 5000);
-    
-    return () => clearInterval(interval);
+    let stopped = false;
+    let timer;
+    const poll = async () => {
+      if (!document.hidden) await refreshData();
+      if (!stopped) timer = setTimeout(poll, 5000);
+    };
+    timer = setTimeout(poll, 0);
+    return () => { stopped = true; clearTimeout(timer); };
   }, [refreshData]);
 
-  // Set default active namespace when list loads
-  useEffect(() => {
-    if (activeNamespace === 'all' && namespaces.length > 0) {
-      // Keep "all" or set to first, "all" is a great default for searching everything
-    }
-  }, [namespaces, activeNamespace]);
-
-  // Toggle body class for simplified mode CSS overrides
-  useEffect(() => {
-    if (isSimplified) {
-      document.body.classList.add('simplified-mode');
-    } else {
-      document.body.classList.remove('simplified-mode');
-    }
-  }, [isSimplified]);
-
-  // 持久化命名空间选择 — 刷新后自动恢复
-  useEffect(() => {
-    try { localStorage.setItem('hermes_active_ns', activeNamespace); } catch {}
-  }, [activeNamespace]);
-
-  // 持久化当前 Tab — 刷新后回到上次看的位置
-  useEffect(() => {
-    try { localStorage.setItem('hermes_active_tab', activeTab); } catch {}
-  }, [activeTab]);
-
-  // 持久化精简/完整模式 — 刷新后保持上次选择
-  useEffect(() => {
-    try { localStorage.setItem('hermes_simplified', String(isSimplified)); } catch {}
-  }, [isSimplified]);
-
-  return (
-    <AppContext.Provider
-      value={{
-        activeNamespace,
-        setActiveNamespace,
-        activeTab,
-        setActiveTab,
-        namespaces,
-        stats,
-        isOnline,
-        lastEvent,
-        setLastEvent,
-        avatarMuted,
-        setAvatarMuted,
-        refreshData,
-        isGraphAvatarExpanded,
-        setIsGraphAvatarExpanded,
-        isSimplified,
-        setIsSimplified,
-      }}
-    >
-      {children}
-    </AppContext.Provider>
-  );
+  return <AppContext.Provider value={{
+    activeNamespace, setActiveNamespace: value => savePreference('namespace', value),
+    activeTab, setActiveTab: value => savePreference('tab', value),
+    projectTask: preferences.task || null, setProjectTask, startingProjectTask, setStartingProjectTask,
+    stats, namespaces, isOnline, refreshData,
+  }}>{children}</AppContext.Provider>;
 }
 
 export function useApp() {
   const context = useContext(AppContext);
-  if (!context) {
-    throw new Error('useApp must be used within an AppProvider');
-  }
+  if (!context) throw new Error('useApp must be used within an AppProvider');
   return context;
 }

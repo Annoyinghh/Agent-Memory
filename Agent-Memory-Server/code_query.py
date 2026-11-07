@@ -4,7 +4,7 @@ code_query.py — codebase-memory-mcp (CBM)-style structural query layer.
 These read-only methods live on a mixin (CodeQueryMixin) that MemoryEngine
 inherits, so they share the engine's self.lock / self.cursor / self.conn and
 can call existing engine helpers (list_communities, get_graph_node_meta,
-_read_source_snippet, get_graph_stats, get_manifest, _resolve_indexed_source_path)
+get_graph_stats, get_manifest)
 via plain `self.` — no duplication, no second db plumbing.
 
 A self-contained @_db_lock decorator is defined here (instead of importing
@@ -29,10 +29,11 @@ pretend to CBM's fine-grained Function/Method/Interface split.
 from __future__ import annotations
 
 import functools
-import hashlib
 import os
 import re
 from typing import Any, Dict, List, Optional
+
+from source_files import changed_indexed_files, read_source_snippet
 
 
 def _db_lock(func):
@@ -123,18 +124,25 @@ class CodeQueryMixin:
         if row:
             return [self._row_to_candidate(row)]
         # 2. exact external_id (case-insensitive)
-        self.cursor.execute(base_sql + " AND LOWER(gn.external_id) = ?", (namespace, start.casefold()))
+        self.cursor.execute(base_sql + " AND LOWER(gn.external_id) = ? LIMIT ?", (namespace, start.casefold(), limit))
         rows = self.cursor.fetchall()
         if rows:
-            return [self._row_to_candidate(r) for r in rows[:limit]]
+            return [self._row_to_candidate(r) for r in rows]
         # 3. substring of external_id or content(label)
         needle = start.casefold()
         self.cursor.execute(
             base_sql + " AND (INSTR(LOWER(gn.external_id), ?) > 0 OR INSTR(LOWER(m.content), ?) > 0)",
             (namespace, needle, needle),
         )
-        rows = self.cursor.fetchall()
-        return [self._row_to_candidate(r) for r in rows[:limit]]
+        # Content also includes source snippets; a mention in a snippet is not a symbol match.
+        matches = []
+        for row in self.cursor:
+            candidate = self._row_to_candidate(row)
+            if needle in candidate['label'].casefold() or needle in (candidate['external_id'] or '').casefold():
+                matches.append(candidate)
+                if len(matches) == limit:
+                    break
+        return matches
 
     def _fetch_node_metas(self, namespace: str, ids: List[str]) -> Dict[str, Dict[str, Any]]:
         if not ids:
@@ -280,41 +288,36 @@ class CodeQueryMixin:
             conditions.append("gn.node_type = ?")
             params.append(node_type)
         where = " AND ".join(conditions)
-        self.cursor.execute(
+        rows = self.conn.execute(
             f"SELECT gn.id, gn.node_type, gn.source_file, gn.source_location, "
             f"gn.external_id, gn.community_id, m.content "
             f"FROM graph_nodes gn JOIN memory_fts m ON gn.id = m.id WHERE {where}",
             params,
         )
-        rows = self.cursor.fetchall()
         deg = self._compute_degrees(namespace)
         src_re = re.compile(source_file_regex) if source_file_regex else None
         name_re = re.compile(name_regex) if name_regex else None
 
-        filtered: List[Dict[str, Any]] = []
+        page = []
+        total = 0
         for r in rows:
             cand = self._row_to_candidate(r)
             d = deg.get(r[0], {"in": 0, "out": 0, "total": 0})
-            total = d["total"]
-            if min_degree is not None and total < int(min_degree):
+            degree = d["total"]
+            if min_degree is not None and degree < int(min_degree):
                 continue
-            if max_degree is not None and total > int(max_degree):
+            if max_degree is not None and degree > int(max_degree):
                 continue
             if src_re and not src_re.search(r[2] or ""):
                 continue
             if name_re and not name_re.search(cand["label"] or ""):
                 continue
-            filtered.append({**cand, "in_degree": d["in"], "out_degree": d["out"], "total_degree": total})
-
-        total = len(filtered)
-        page = filtered[offset:offset + limit]
+            if offset <= total < offset + limit:
+                page.append({**cand, "in_degree": d["in"], "out_degree": d["out"], "total_degree": degree})
+            total += 1
         return {
             "namespace": namespace, "total": total, "limit": limit, "offset": offset,
-            "results": [{"id": c["id"], "label": c["label"], "node_type": c["node_type"],
-                         "source_file": c["source_file"], "source_location": c["source_location"],
-                         "external_id": c["external_id"], "community_id": c["community_id"],
-                         "in_degree": c["in_degree"], "out_degree": c["out_degree"],
-                         "total_degree": c["total_degree"]} for c in page],
+            "results": page,
         }
 
     @_db_lock
@@ -443,7 +446,7 @@ class CodeQueryMixin:
                          qualified_name: Optional[str] = None, context_lines: int = 6) -> Dict[str, Any]:
         """Read numbered source lines for a symbol. Resolves by node_id first,
         else by qualified_name (same rules as trace_path's start). Reuses the
-        engine's _read_source_snippet (handles L{N} parse + path resolution)."""
+        shared source reader for location parsing and path confinement."""
         context_lines = max(0, min(int(context_lines if context_lines is not None else 6), 50))
         node = None
         if node_id:
@@ -459,6 +462,10 @@ class CodeQueryMixin:
                         "source_location": r[3], "label": _extract_label(r[4])}
         if not node and qualified_name:
             cands = self._resolve_start_node(namespace, qualified_name)
+            if len(cands) > 1:
+                return {"namespace": namespace, "error": "ambiguous",
+                        "message": "Multiple symbols match. Re-call with an exact node_id.",
+                        "candidates": cands}
             if cands:
                 c = cands[0]
                 node = {"id": c["id"], "node_type": c["node_type"], "source_file": c["source_file"],
@@ -466,7 +473,7 @@ class CodeQueryMixin:
         if not node:
             return {"namespace": namespace, "error": "not_found",
                     "message": "No node matched node_id/qualified_name in this namespace."}
-        snippet = self._read_source_snippet(node["source_file"], node["source_location"],
+        snippet = read_source_snippet(node["source_file"], node["source_location"],
                                             context_lines=context_lines)
         return {"namespace": namespace, "node_id": node["id"], "label": node["label"],
                 "node_type": node["node_type"], "source_file": node["source_file"],
@@ -515,18 +522,7 @@ class CodeQueryMixin:
             git_error = "git not on PATH"
 
         if git_unavailable:
-            manifest = self.get_manifest(namespace)  # {source_file: content_hash}
-            for sf, old_hash in (manifest or {}).items():
-                p = self._resolve_indexed_source_path(sf)
-                if not p:
-                    continue
-                try:
-                    with open(p, "rb") as fh:
-                        h = hashlib.sha256(fh.read()).hexdigest()
-                except OSError:
-                    continue
-                if h != old_hash:
-                    changed_files.append(sf)
+            changed_files = changed_indexed_files(self.get_manifest(namespace) or {})
 
         # Map changed files → graph nodes (source_file IN changed set).
         impacted: List[Dict[str, Any]] = []
