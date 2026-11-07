@@ -1,13 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useApp } from '@/context/AppContext';
-import { api } from '@/lib/api';
 import { nodeLabel, replayGalaxy } from '@/lib/replayGalaxy';
+import { useProjectGalaxy } from '@/lib/useProjectGalaxy';
 import GalaxyMap from './GalaxyMap';
 import SourceSnippet from './SourceSnippet';
-
-const SAMPLE_LIMIT = 200;
 
 export default function GraphExplorer() {
   const { activeNamespace } = useApp();
@@ -15,20 +13,10 @@ export default function GraphExplorer() {
 }
 
 function ProjectGraph({ namespace }) {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    let active = true;
-    Promise.all([api.getGraphData(namespace, SAMPLE_LIMIT), api.graphStats(namespace)])
-      .then(([graph, stats]) => { if (active) setData({ ...graph, stats }); })
-      .catch(failure => { if (active) setError(failure.message); });
-    return () => { active = false; };
-  }, [namespace]);
-
-  if (error) return <p role="alert" className="notice error">{error}</p>;
-  if (!data) return <p role="status" className="empty-state">正在读取项目关系…</p>;
-  return <GraphConsole data={data} namespace={namespace} />;
+  const graph = useProjectGalaxy(namespace, true);
+  if (!graph) return <p role="status" className="empty-state">正在读取项目关系…</p>;
+  if (graph.error) return <p role="alert" className="notice error">{graph.error}</p>;
+  return <GraphConsole data={graph.data} namespace={namespace} />;
 }
 
 function GraphConsole({ data, namespace, sample = false }) {
@@ -68,7 +56,7 @@ function GraphConsole({ data, namespace, sample = false }) {
       <p className="source-path">{selected.source_file || selected.source} {selected.source_location}</p>
       {!sample && <p className="source-path">节点 ID <code>{selected.id}</code></p>}
       {selected.content && <details open={sample}><summary>{sample ? '样例源码' : '索引内容'}</summary><pre>{selected.content}</pre></details>}
-      {!sample && selected.node_type && <SourceSnippet key={selected.id} namespace={namespace} nodeId={selected.id} />}
+      {!sample && selected.node_type && <SourceSnippet key={selected.id} namespace={namespace} nodeId={selected.id} indexedContent={selected.content} />}
       <div className="relationship-list">{incident.map((edge, index) => {
         const id = edge.source === selected.id ? edge.target : edge.source;
         return <button className="button secondary" key={index} onClick={() => setSelectedId(id)}>{edge.source === selected.id ? '→' : '←'} {edge.relation} · {nodeLabel(byId.get(id) || { id })}</button>;

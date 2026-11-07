@@ -25,7 +25,7 @@ export default function DigitalAvatar() {
     scene.add(head, new THREE.HemisphereLight(0xaddbff, 0x23194a, 1.7));
     const key = new THREE.DirectionalLight(0x9adeff, 3.1);
     key.position.set(-3, 4, 5);
-    const rim = new THREE.DirectionalLight(0xb4a3ff, 4.8);
+    const rim = new THREE.DirectionalLight(0xb4a3ff, 3.2);
     rim.position.set(3, 0, -4);
     scene.add(key, rim);
 
@@ -89,7 +89,7 @@ export default function DigitalAvatar() {
           color: 0x3678a8, emissive: 0x102e61, emissiveIntensity: 0.4, metalness: 0.48, roughness: 0.42,
         })));
         const lines = new THREE.LineSegments(new THREE.WireframeGeometry(geometry), new THREE.LineBasicMaterial({
-          color: 0xa1e4ff, transparent: true, opacity: 0.24,
+          color: 0xa1e4ff, transparent: true, opacity: 0.14,
         }));
         lines.scale.setScalar(1.003);
         head.add(lines);

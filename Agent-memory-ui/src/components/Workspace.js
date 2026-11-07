@@ -25,10 +25,19 @@ export default function Workspace() {
   const view = VIEWS.find(([key]) => key === activeTab) || VIEWS[0];
   const needsProject = ['code', 'sessions'].includes(activeTab) && activeNamespace === 'all';
   const engineStatus = isOnline === null ? '正在连接本地引擎' : isOnline ? '本地引擎已连接' : '本地引擎未连接';
+  const showcase = activeTab === 'demo';
+  const Navigation = showcase ? 'header' : 'aside';
+  const projectSelector = (namespaces.length > 0 || activeNamespace !== 'all') && <div className="project-selector">
+    <label htmlFor="project">项目空间</label>
+    <select id="project" value={activeNamespace} onChange={event => setActiveNamespace(event.target.value)}>
+      <option value="all">{showcase || activeTab === 'graph' ? '样例航区' : '全部空间'}</option>
+      {namespaces.filter(name => name !== 'all').map(name => <option key={name}>{name}</option>)}
+    </select>
+  </div>;
 
-  return <div className="workbench">
+  return <div className={showcase ? 'workbench showcase-workbench' : 'workbench'}>
     <a href="#workspace-content" className="skip-link">跳到工作区</a>
-    <aside className="workspace-sidebar">
+    <Navigation className={showcase ? 'bridge-nav' : 'workspace-sidebar'}>
       <div className="workspace-brand"><span className="brand-mark" aria-hidden="true">am</span><span>Agent Memory<small>本地代码导航</small></span></div>
       <nav aria-label="工作台导航">{VIEWS.map(([key, title]) =>
         <button key={key} onClick={() => setActiveTab(key)} aria-current={activeTab === key ? 'page' : undefined}>
@@ -39,16 +48,12 @@ export default function Workspace() {
         <span className="status-dot" data-online={isOnline} />{engineStatus}
         <small>{namespaces.length} 个项目空间 · {(stats.total_chunks || 0).toLocaleString()} 条记录</small>
       </div>
-    </aside>
+      {showcase && projectSelector}
+    </Navigation>
     <main id="workspace-content" className="workspace-main">
-      {(activeTab !== 'demo' || namespaces.length > 0) && <header className="workspace-header">
-        {activeTab === 'demo' ? <p>{view[1]}</p> : <div><h1>{view[1]}</h1><p>{view[2]}</p></div>}
-        {(namespaces.length > 0 || activeNamespace !== 'all') && <div className="project-selector"><label htmlFor="project">项目空间</label>
-          <select id="project" value={activeNamespace} onChange={event => setActiveNamespace(event.target.value)}>
-            <option value="all">{activeTab === 'graph' ? '样例航区' : '全部空间'}</option>
-            {namespaces.filter(name => name !== 'all').map(name => <option key={name}>{name}</option>)}
-          </select>
-        </div>}
+      {!showcase && <header className="workspace-header">
+        <div><h1>{view[1]}</h1><p>{view[2]}</p></div>
+        {projectSelector}
       </header>}
       {isOnline === false && <p className="notice" role="status">引擎尚未连接。请运行项目根目录的 start.bat 或 docker compose up -d。</p>}
       <section key={`${activeTab}:${activeNamespace}`} className="workspace-content" aria-label={view[1]}>
